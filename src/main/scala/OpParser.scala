@@ -4,7 +4,6 @@ import scala.util.parsing.combinator.JavaTokenParsers
 
 trait OpParser extends JavaTokenParsers {
   type Schema = Vector[Attribute]
-  type Values = Vector[Value]
 
   abstract class Operator
   case class PrintOp(childOp: Operator) extends Operator
@@ -23,27 +22,23 @@ trait OpParser extends JavaTokenParsers {
   case class Sum(attribute: String) extends AggregateFunction
   case class Average(attribute: String) extends AggregateFunction
 
-  abstract class Predicate
-  case class Eq(a: String, b: Value) extends Predicate
-  case class Gte(a: String, b: Value) extends Predicate
-  case class Lte(a: String, b: Value) extends Predicate
-  case class Gt(a: String, b: Value) extends Predicate
-  case class Lt(a: String, b: Value) extends Predicate
-
   abstract class Term
   abstract class Attribute extends Term { val name: String }
-  abstract class Value extends Term { val value: Any }
-
   case class IntAttribute(name: String) extends Attribute
   case class DoubleAttribute(name: String) extends Attribute
   case class StringAttribute(name: String) extends Attribute
+  case class AnyAttribute(name: String) extends Attribute
 
-  case class IntValue(value: Int) extends Value
-  case class DoubleValue(value: Double) extends Value
-  case class StringValue(value: String) extends Value
+  case class Value(x: Any) extends Term
+
+  abstract class Predicate
+  case class Eq(a: Attribute, b: Value) extends Predicate
+  case class Gte(a: Attribute, b: Value) extends Predicate
+  case class Lte(a: Attribute, b: Value) extends Predicate
+  case class Gt(a: Attribute, b: Value) extends Predicate
+  case class Lt(a: Attribute, b: Value) extends Predicate
 
   def Schema(schema: Seq[String]): Schema = schema.map(StringAttribute(_)).toVector // FIXME: This drops type info
-  def Value(valueSeq: Seq[Value]): Values = valueSeq.toVector
   /*
   // some smart constructors
   def Scan(tableName: String): Scan = Scan(tableName, None, None)
@@ -105,10 +100,10 @@ trait OpParser extends JavaTokenParsers {
 
   def aggregateFunction: Parser[AggregateFunction] =
     "count" ~> "(" ~> "*" <~ ")" ^^ { _ => Count() } |
-      "max" ~> "(" ~> attributeIdentifier <~ ")" ^^ { case attribute => Max(attribute) } |
-      "min" ~> "(" ~> attributeIdentifier <~ ")" ^^ { case attribute => Min(attribute) } |
-      "sum" ~> "(" ~> attributeIdentifier <~ ")" ^^ { case attribute => Sum(attribute) } |
-      "avg" ~> "(" ~> attributeIdentifier <~ ")" ^^ { case attribute => Average(attribute) }
+      "max" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Max(attribute) } |
+      "min" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Min(attribute) } |
+      "sum" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Sum(attribute) } |
+      "avg" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Average(attribute) }
 
   def predicates: Parser[Seq[Predicate]] = repsep(predicate, "and")
 
@@ -119,12 +114,12 @@ trait OpParser extends JavaTokenParsers {
     leftTerm ~ ">"  ~ rightTerm ^^ { case a ~ _ ~ b => Gt(a, b)  } |
     leftTerm ~ "<"  ~ rightTerm ^^ { case a ~ _ ~ b => Lt(a, b)  }
 
-  def leftTerm: Parser[String] = attributeIdentifier
+  def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
 
   def rightTerm: Parser[Value] =
-    strippedStringLiteral ^^ { case x => StringValue(x)    } |
-    decimalNumber         ^^ { case x => IntValue(x.toInt) } |
-    floatingPointNumber   ^^ { case x => DoubleValue(x.toDouble) }
+    strippedStringLiteral ^^ { x => Value(x) } |
+    decimalNumber         ^^ { x => Value(x.toInt) } |
+    floatingPointNumber   ^^ { x => Value(x.toDouble) }
 
   def strippedStringLiteral: Parser[String] = stringLiteral ^^ { _ drop 1 dropRight 1 }
 
