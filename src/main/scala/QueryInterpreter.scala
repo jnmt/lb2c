@@ -152,12 +152,5 @@ object QueryInterpreter extends OpParser {
       execOp(child) { rec => printFields(rec.fields) }
   }
 
-  def execQuery(query: String): Unit = {
-    this.apply(query) match {
-      case Right(op: Operator) => execOp(op){ _ => }
-      case Left(errorMessage: String) => println(errorMessage)
-    }
-
-  }
-
+  def execQuery(query: String): Unit = execOp(parseQuery(query)) { _ => }
 }

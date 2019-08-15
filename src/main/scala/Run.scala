@@ -5,24 +5,27 @@ import scala.lms.common._
 object Run {
 
   def main(args: Array[String]) {
+    var engineType: String = ""
+    var query: String = ""
 
-    /*
-    val snippet = new DslDriverC[Int,Int] {
-      def snippet(x: Rep[Int]) = {
-
-        def compute(b: Rep[Boolean]): Rep[Int] = {
-          // the if is deferred to the second stage
-          if (b) 1 else x
-        }
-        compute(x==1)
-      }
+    args.length match {
+      case 1 => { engineType = "interpreter"; query = args(0) }
+      case 2 => { engineType = args(0); query = args(1) }
+      case _ => { println("Specify engine type and query"); return }
     }
-    println(snippet.code)
 
-     */
-    println(args(0))
-    QueryInterpreter.execQuery(args(0))
-    //args.map(_.toInt).map(snippet.eval)
+    engineType match {
+      case "compiler" => {
+        val engine = new DslDriverC[Int, Unit] with QueryCompiler with CLibraryExp { q =>
+          override val codegen = new DslGenC with CGenUncheckedOps {
+            val IR: q.type = q
+          }
+          override def snippet(x: Rep[Int]): Rep[Unit] = execQuery(query)  // FIXME: Input x is unnecessary...
+        }
+        engine.eval
+      }
+      case "interpreter" => QueryInterpreter.execQuery(query)
+    }
   }
 
 }

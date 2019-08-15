@@ -227,7 +227,7 @@ trait DslGenC extends CGenNumericOps
         return stat.st_size;
       }
       int printll(char* s) {
-        while (*s != '\n' && *s != ',' && *s != '\t') {
+        while (*s != '\n' && *s != ',' && *s != '|' && *s != '\t') {
           putchar(*s++);
         }
         return 0;
@@ -244,7 +244,7 @@ trait DslGenC extends CGenNumericOps
         return hash;
       }
       //void Snippet(char*);
-      int Snippet(int);
+      void Snippet(int);
       int main(int argc, char *argv[])
       {
         /*
@@ -252,10 +252,8 @@ trait DslGenC extends CGenNumericOps
           printf("usage: query <filename>\n");
           return 0;
         }
-        Snippet(argv[1]);
         */
-        printf("Args: %s\n", argv[1]);
-        printf("Result: %d\n", Snippet(atoi(argv[1])));
+        Snippet(0);
         return 0;
       }
 
@@ -293,6 +291,17 @@ abstract class DslDriverC[A:Manifest,B:Manifest] extends DslSnippet[A,B] with Ds
     codegen.emitSource(snippet, "Snippet", new java.io.PrintWriter(source))
     source.toString
   }
+  def eval: Unit = { // TODO: jnmt: Clean up
+    val out = new java.io.PrintWriter("/tmp/snippet.c")
+    out.println(code)
+    out.close
+    //TODO: use precompile
+    (new java.io.File("/tmp/snippet")).delete
+    import scala.sys.process._
+    (s"cc -std=c99 -O3 /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+    (s"/tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+  }
+  /*
   def eval(a:A): Unit = { // TBD: should read result of type B?
     val out = new java.io.PrintWriter("/tmp/snippet.c")
     out.println(code)
@@ -303,4 +312,5 @@ abstract class DslDriverC[A:Manifest,B:Manifest] extends DslSnippet[A,B] with Ds
     (s"cc -std=c99 -O3 /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
     (s"/tmp/snippet $a":ProcessBuilder).lines.foreach(Console.println _)
   }
+  */
 }
