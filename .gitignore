@@ -1,2 +1,9 @@
+# IntelliJ IDEA
+.idea/
+
+# Scala
 *.class
 *.log
+
+# SBT
+target/
