@@ -2,22 +2,18 @@ name := "lb2c"
 
 version := "0.1"
 
-scalaVersion := "2.11.2"
-
-scalaOrganization := "org.scala-lang.virtualized"
+scalaVersion := "2.12.8"
 
 resolvers += Resolver.sonatypeRepo("snapshots")
 
-libraryDependencies += "org.scala-lang.lms" %% "lms-core" % "1.0.0-SNAPSHOT"
+libraryDependencies += "org.scala-lang.virtualized" % "lms-clean_2.12" % "0.0.1-SNAPSHOT" // local
 
-libraryDependencies += "org.scala-lang.virtualized" % "scala-compiler" % "2.11.2"
+libraryDependencies += "org.scala-lang" % "scala-compiler" % scalaVersion.value % "compile"
+libraryDependencies += "org.scala-lang" % "scala-library" % scalaVersion.value % "compile"
+libraryDependencies += "org.scala-lang" % "scala-reflect" % scalaVersion.value % "compile"
 
-libraryDependencies += "org.scala-lang.virtualized" % "scala-library" % "2.11.2"
+libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
 
-libraryDependencies += "org.scala-lang.virtualized" % "scala-reflect" % "2.11.2"
-
-libraryDependencies += "org.scalatest" % "scalatest_2.11" % "2.2.2"
-
-scalacOptions += "-Yvirtualize"
-
-scalacOptions += "-deprecation"
+autoCompilerPlugins := true
+val paradiseVersion = "2.1.0"
+addCompilerPlugin("org.scalamacros" % "paradise" % paradiseVersion cross CrossVersion.full)

@@ -1,7 +1,12 @@
 package lb2c
 
+import lms.core.stub._
+import lms.core.virtualize
+import lms.macros.SourceContext
+
 import scala.collection.mutable.HashMap
 
+@virtualize
 trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   val defaultFieldDelimiter = ','
 
@@ -40,19 +45,19 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   abstract class Field {
     val value: Any
     def print()
-    def eq(o: Field): Rep[Boolean]
+    def isEquals(o: Field): Rep[Boolean]
   }
   case class IntField(value: Rep[Int]) extends Field {
     def print() = printf("%d", value)
-    def eq(o: Field) = o match { case IntField(v) => value == v }
+    def isEquals(o: Field) = o match { case IntField(v) => value == v }
   }
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
-    def eq(o: Field) = o match { case DoubleField(v) => value == v }
+    def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
   }
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
-    def eq(o: Field) = o match {
+    def isEquals(o: Field) = o match {
       case StringField(operandValue, operandLength) =>
         if (length != operandLength)
           false
@@ -106,7 +111,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   def evalPredicate(predicate: Predicate, record: Record): Rep[Boolean] = predicate match {
-    case Eq(attr, value) => record(attr.name) eq evalTerm(value, record)
+    case Eq(attr, value) => record(attr.name) isEquals evalTerm(value, record)
   }
 
   def evalTerm(term: Term, record: Record): Field = term match {
@@ -217,7 +222,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
       execOp(left) { leftRecord =>
         execOp(right) { rightRecord =>
-          if (leftRecord(leftAttr) eq rightRecord(rightAttr))
+          if (leftRecord(leftAttr) isEquals rightRecord(rightAttr))
             callback(Record(leftRecord.fields ++ rightRecord.fields, Schema(getSchema(left) ++ getSchema(right))))
         }
       }

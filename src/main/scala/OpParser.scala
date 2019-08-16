@@ -1,6 +1,6 @@
 package lb2c
 
-trait OpParser extends {
+trait OpParser {
   type Schema = Vector[Attribute]
 
   abstract class Operator
