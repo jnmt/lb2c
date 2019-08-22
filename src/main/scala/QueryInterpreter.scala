@@ -41,17 +41,52 @@ object QueryInterpreter extends OpParser {
     s.close
   }
 
-  def printSchema(schema: Seq[String]) = println(schema.mkString(defaultFieldDelimiter.toString))
+  def printSchema(schema: Schema) = println(schema.map(_.name).mkString(defaultFieldDelimiter.toString))
 
   //def printFields(values: Values) = printf(values.map{_ => "%s"}.mkString("", defaultFieldDelimiter.toString, "\n"), values: _*)
   def printFields(fields: Fields) = printf(fields.map(_.value.toString).mkString("", defaultFieldDelimiter.toString, "\n"), fields: _*)
 
-  def getSchema(o: Operator): Seq[String] = o match {
-    case ScanOp(_, schema, _) => schema.map(_.name)
-    case ProjectOp(_, schema) => schema
-    case FilterOp(child, _)   => getSchema(child)
+  def getAggregateKeysSchema(child: Operator, keys: Seq[String]): Schema = {
+    keys.foldLeft(Vector.empty[Attribute]) {
+      (result, attr) => result ++ getSchema(child).find(_.name == attr)
+    }
+  }
+
+  def getAggregateFunctionsSchema(child: Operator, functions: Seq[AggregateFunction]): Schema = {
+    functions.map {
+      _ match {
+        case Count() => IntAttribute("count")
+        case Max(attr) =>
+          getSchema(child).find(_.name == attr) match {
+            case Some(IntAttribute(name)) => IntAttribute(s"max(${name})")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"max(${name})")
+          }
+        case Min(attr) =>
+          getSchema(child).find(_.name == attr) match {
+            case Some(IntAttribute(name)) => IntAttribute(s"min(${name})")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"min(${name})")
+          }
+        case Sum(attr) =>
+          getSchema(child).find(_.name == attr) match {
+            case Some(IntAttribute(name)) => IntAttribute(s"sum(${name})")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"sum(${name})")
+          }
+        case Average(attr) =>
+          getSchema(child).find(_.name == attr) match {
+            case Some(IntAttribute(name)) => DoubleAttribute(s"avg(${name})")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"avg(${name})")
+          }
+      }
+    }.toVector
+  }
+
+  def getSchema(o: Operator): Schema = o match {
+    case ScanOp(_, schema, _) => schema
+    case ProjectOp(child, attributes) =>
+      attributes.foldLeft(Vector.empty[Attribute]){ (result, attr) => result ++ getSchema(child).find(_.name == attr) }
+    case FilterOp(child, _) => getSchema(child)
     case NestedLoopJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
-    case AggregateOp(_, keys, functions) => keys ++ functions.map(_.toString)
+    case AggregateOp(child, keys, functions) => getAggregateKeysSchema(child, keys) ++ getAggregateFunctionsSchema(child, functions)
   }
 
   def evalPredicate(predicate: Predicate, record: Record): Boolean = predicate match {
@@ -112,7 +147,7 @@ object QueryInterpreter extends OpParser {
 
     case ProjectOp(child, attributeNames) =>
       execOp(child) { record => {
-        callback(Record(record(attributeNames), Schema(attributeNames)))
+        callback(Record(record(attributeNames), getSchema(o)))
       } }
 
     case FilterOp(child, predicates) =>
@@ -124,7 +159,7 @@ object QueryInterpreter extends OpParser {
       execOp(left) { leftRecord => {
         execOp(right) { rightRecord => {
           if (leftRecord(leftAttr) eq rightRecord(rightAttr))
-            callback(Record(leftRecord.fields ++ rightRecord.fields, Schema(getSchema(left) ++ getSchema(right))))
+            callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema))
         } }
       } }
 
@@ -143,7 +178,7 @@ object QueryInterpreter extends OpParser {
       } }
       hashMap foreach {
         case (valuesAsKey, funcMap) =>
-          callback(Record(Fields(valuesAsKey) ++ Fields(functions.map(_.toString).map(funcMap(_))), Schema(keys ++ functions.map(_.toString))))
+          callback(Record(Fields(valuesAsKey) ++ Fields(functions.map(_.toString).map(funcMap(_))), getSchema(o)))
       }
 
     case PrintOp(child) =>

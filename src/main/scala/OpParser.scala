@@ -36,7 +36,6 @@ trait OpParser {
   case class Gt(a: Attribute, b: Value) extends Predicate
   case class Lt(a: Attribute, b: Value) extends Predicate
 
-  def Schema(schema: Seq[String]): Schema = schema.map(StringAttribute(_)).toVector // FIXME: This drops type info
   /*
   // some smart constructors
   def Scan(tableName: String): Scan = Scan(tableName, None, None)
