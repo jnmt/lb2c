@@ -4,8 +4,6 @@ import lms.core.stub._
 import lms.core.virtualize
 import lms.macros.SourceContext
 
-import scala.collection.mutable.HashMap
-
 @virtualize
 trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   val defaultFieldDelimiter = ','
@@ -39,24 +37,36 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def done = close(fd)
   }
 
+  /*
+    Schema is a Vector of Attribute.
+    Attribute is a class that holds its name and type of attribute as a sub class (e.g., IntAttribute).
+    Value is a class that holds single value parsed by OpParser.
+    Field is a class that holds single value parsed by Scanner.
+    TODO: Value and Field can be unified?
+   */
+
   type Fields = Vector[Field]
   def Fields(fields: Seq[Field]): Fields = fields.toVector
 
   abstract class Field {
     val value: Any
     def print()
+    def hash(): Rep[Long]
     def isEquals(o: Field): Rep[Boolean]
   }
   case class IntField(value: Rep[Int]) extends Field {
     def print() = printf("%d", value)
+    def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case IntField(v) => value == v }
   }
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
+    def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
   }
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
+    def hash(): Rep[Long] = value.HashCode(length)
     def isEquals(o: Field) = o match {
       case StringField(operandValue, operandLength) =>
         if (length != operandLength)
@@ -155,88 +165,59 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Value(x: String) => StringField(x, x.toString.length)
   }
 
-//  def execAggFunc(func: AggregateFunction, record: Record, hm: HashMap[String, Field]): Rep[Unit] = {
-//    val x = func match {
-//      case Count()    => IntField(0)
-//      case Max(attribute: String) => record(attribute)
-//      case Min(attribute: String) => record(attribute)
-//      case Sum(_)     => IntField(0)
-//      case Average(_) => DoubleField(0.0)
-//    }
-//    val y = hm.getOrElseUpdate(func.toString, x)
-//    func match {
-//      case Count() => y match {
-//        case y: IntField => hm.update(func.toString, IntField(y.value+1))
-//      }
-//      case Max(_)  => (x, y) match {
-//        case (x: IntField, y: IntField) => if (x.value > y.value) hm.update(func.toString, x)
-//        case (x: DoubleField, y: DoubleField) => if (x.value > y.value) hm.update(func.toString, x)
-//      }
-//      case Min(_)  => (x, y) match {
-//        case (x: IntField, y: IntField) => if (x.value < y.value) hm.update(func.toString, x)
-//        case (x: DoubleField, y: DoubleField) => if (x.value < y.value) hm.update(func.toString, x)
-//      }
-//      case Sum(attribute: String) =>
-//        val z = record(attribute)
-//        (y, z) match {
-//          // FIXME: Much better way for handling data types?
-//          case (y: IntField, z: IntField) => hm.update(func.toString, IntField(y.value+z.value))
-//          case (y: IntField, z: DoubleField) => hm.update(func.toString, DoubleField(y.value+z.value))
-//          case (y: DoubleField, z: DoubleField) => hm.update(func.toString, DoubleField(y.value+z.value))
-//        }
-//      case Average(attribute: String) =>
-//        val z = record(attribute)
-//        val count = hm("_counter_")
-//        (y, z, count) match {
-//          // FIXME: Much better way for handling data types?
-//          case (y: DoubleField, z: IntField, count: IntField) =>
-//            hm.update(func.toString, DoubleField((y.value*count.value+z.value)/(count.value+1)))
-//          case (y: DoubleField, z: DoubleField, count: IntField) =>
-//            hm.update(func.toString, DoubleField((y.value*count.value+z.value)/(count.value+1)))
-//        }
-//    }
-//  }
+  def getInitFields(schema: Schema): Fields = {
+    schema.map {
+      _ match {
+        case IntAttribute(_) => IntField(0)
+        case DoubleAttribute(_) => DoubleField(0.0)
+      }
+    }
+  }
 
-  def execAggFunc(func: AggregateFunction, record: Record, hm: HashMap[Rep[String], Field]): Rep[Unit] = {
-    val x = func match {
-      case Count()    => IntField(0)
-      case Max(attribute: String) => record(attribute)
-      case Min(attribute: String) => record(attribute)
-      case Sum(_)     => IntField(0)
-      case Average(_) => DoubleField(0.0)
-    }
-    val y = hm.getOrElseUpdate(func.toString, x)
-    func match {
-      case Count() => y match {
-        case y: IntField => hm.update(func.toString, IntField(y.value+1))
+  def execAggregation(functions: Seq[AggregateFunction], currentFields: Fields, record: Record): Fields = {
+    (functions, currentFields).zipped.map { (func, current) =>
+      func match {
+        case Count() =>
+          current match {
+            case current: IntField => IntField(current.value + 1)
+          }
+        case Max(attribute) =>
+          val field = record(attribute)
+          (current, field) match {
+            // TODO: Why we cannot write like this? "=> if (current.value < field.value) field else current"
+            case (current: IntField, field: IntField) =>
+              IntField(if (current.value < field.value) field.value else current.value)
+            case (current: DoubleField, field: DoubleField) =>
+              DoubleField(if (current.value < field.value) field.value else current.value)
+          }
+        case Min(attribute) =>
+          val field = record(attribute)
+          (current, field) match {
+            case (current: IntField, field: IntField) =>
+              IntField(if (current.value > field.value) field.value else current.value)
+            case (current: DoubleField, field: DoubleField) =>
+              DoubleField(if (current.value > field.value) field.value else current.value)
+          }
+        case Sum(attribute: String) =>
+          val field = record(attribute)
+          (current, field) match {
+            // FIXME: Much better way for handling data types?
+            case (current: IntField, field: IntField) => IntField(current.value + field.value)
+            case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
+            case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
+          }
+        //        case Average(attribute: String) =>
+        //          val z = record(attribute)
+        //          val count = hm("_counter_")
+        //          (y, z, count) match {
+        //            // FIXME: Much better way for handling data types?
+        //            case (y: DoubleField, z: IntField, count: IntField) =>
+        //              hm.update(func.toString, DoubleField((y.value * count.value + z.value) / (count.value + 1)))
+        //            case (y: DoubleField, z: DoubleField, count: IntField) =>
+        //              hm.update(func.toString, DoubleField((y.value * count.value + z.value) / (count.value + 1)))
+        //          }
       }
-      case Max(_)  => (x, y) match {
-        case (x: IntField, y: IntField) => if (x.value > y.value) hm.update(func.toString, x)
-        case (x: DoubleField, y: DoubleField) => if (x.value > y.value) hm.update(func.toString, x)
-      }
-      case Min(_)  => (x, y) match {
-        case (x: IntField, y: IntField) => if (x.value < y.value) hm.update(func.toString, x)
-        case (x: DoubleField, y: DoubleField) => if (x.value < y.value) hm.update(func.toString, x)
-      }
-      case Sum(attribute: String) =>
-        val z = record(attribute)
-        (y, z) match {
-          // FIXME: Much better way for handling data types?
-          case (y: IntField, z: IntField) => hm.update(func.toString, IntField(y.value+z.value))
-          case (y: IntField, z: DoubleField) => hm.update(func.toString, DoubleField(y.value+z.value))
-          case (y: DoubleField, z: DoubleField) => hm.update(func.toString, DoubleField(y.value+z.value))
-        }
-      case Average(attribute: String) =>
-        val z = record(attribute)
-        val count = hm("_counter_")
-        (y, z, count) match {
-          // FIXME: Much better way for handling data types?
-          case (y: DoubleField, z: IntField, count: IntField) =>
-            hm.update(func.toString, DoubleField((y.value*count.value+z.value)/(count.value+1)))
-          case (y: DoubleField, z: DoubleField, count: IntField) =>
-            hm.update(func.toString, DoubleField((y.value*count.value+z.value)/(count.value+1)))
-        }
-    }
+    }.toVector
   }
 
   def execOp(o: Operator)(callback: Record => Rep[Unit]): Rep[Unit] = o match {
@@ -262,40 +243,18 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         }
       }
 
-//    case AggregateOp(child, keys, functions) =>
-//      val hashMap = new HashMap[Seq[Field], HashMap[String, Field]]
-//      execOp(child) { record => {
-//        val valuesAsKey = record(keys)
-//        val funcMap = hashMap.getOrElse(valuesAsKey, new HashMap[String, Field])
-//        val count: IntField = funcMap.getOrElseUpdate("_counter_", IntField(0)) match {
-//          case x: IntField => x
-//          case _ => IntField(0)
-//        } // FIXME: Only needed for calculating average ... Not cool!
-//        functions.foreach(execAggFunc(_, record, funcMap))
-//        funcMap.update("_counter_", IntField(count.value+1))
-//        hashMap.update(valuesAsKey, funcMap)
-//      } }
-//      hashMap foreach {
-//        case (valuesAsKey, funcMap) =>
-//          callback(Record(Fields(valuesAsKey) ++ Fields(functions.map(_.toString).map(funcMap(_))), Schema(keys ++ functions.map(_.toString))))
-//      }
-
     case AggregateOp(child, keys, functions) =>
-      val hashMap = new HashMap[Seq[Field], HashMap[Rep[String], Field]]
+      val keySchema = getAggregateKeysSchema(child, keys)
+      val valueSchema = getAggregateFunctionsSchema(child, functions)
+      val hashMap = new LB2HashMap(keySchema, valueSchema)
       execOp(child) { record => {
         val valuesAsKey = record(keys)
-        val funcMap = hashMap.getOrElse(valuesAsKey, new HashMap[Rep[String], Field])
-        val count: IntField = funcMap.getOrElseUpdate("_counter_", IntField(0)) match {
-          case x: IntField => x
-          case _ => IntField(0)
-        } // FIXME: Only needed for calculating average ... Not cool!
-        functions.foreach(execAggFunc(_, record, funcMap))
-        funcMap.update("_counter_", IntField(count.value+1))
-        hashMap.update(valuesAsKey, funcMap)
-      } }
+        val initFields = getInitFields(valueSchema) // FIXME
+        hashMap.update(valuesAsKey, initFields) { currentFields => execAggregation(functions, currentFields, record) }
+      }
+      }
       hashMap foreach {
-        case (valuesAsKey, funcMap) =>
-          callback(Record(Fields(valuesAsKey) ++ Fields(functions.map(_.toString).map(funcMap(_))), getSchema(o)))
+        callback(_)
       }
 
     case PrintOp(child) =>
@@ -305,4 +264,78 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   def execQuery(query: String): Unit = execOp(parseQuery(query)) { _ => }
+
+  def fieldsHash(fields: Fields) = fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }
+
+  class LB2HashMap(keySchema: Schema, valueSchema: Schema) {
+    val size = (1 << 10)
+    val keys = new ColumnarRecordBuffer(keySchema, size)
+    val vals = new ColumnarRecordBuffer(valueSchema, size)
+    val used = NewArray[Boolean](size)
+    for (i <- 0 until size: Rep[Range]) {
+      used(i) = false
+    }
+    val hashMap = NewArray[Int](size)
+    var next = var_new(0)
+
+    def update(keyFields: Fields, init: Fields)(updateFunction: Fields => Fields) = {
+      // Use like this
+      // hm.update(valuesAsKey, initFields){ currentFields => aggregate(currentFields, record) }
+      // hm.foreach { record => do_something(record) }
+
+      val index = fieldsHash(keyFields).toInt % size
+      if (used(index)) { // if the entry is empty
+        vals(index) = updateFunction(vals(index))
+      } else {
+        hashMap(next) = index
+        next += 1
+        keys(index) = keyFields
+        vals(index) = updateFunction(init)
+        used(index) = true
+      }
+    }
+
+    def foreach(f: Record => Rep[Unit]) = {
+      for (i <- 0 until next) {
+        val index = hashMap(i)
+        f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
+      }
+    }
+  }
+
+  abstract class ColumnarBuffer
+  case class IntColumnarBuffer(data: Rep[Array[Int]]) extends ColumnarBuffer
+  case class DoubleColumnarBuffer(data: Rep[Array[Double]]) extends ColumnarBuffer
+  case class StringColumnarBuffer(data: Rep[Array[String]], len: Rep[Array[Int]]) extends ColumnarBuffer
+
+  class ColumnarRecordBuffer(schema: Schema, size: Int) {
+    val columns = schema.map {
+      case IntAttribute(_) => IntColumnarBuffer(NewArray[Int](size))
+      case DoubleAttribute(_) => DoubleColumnarBuffer(NewArray[Double](size))
+      case StringAttribute(_) => StringColumnarBuffer(NewArray[String](size), NewArray[Int](size))
+    }
+
+    // TODO: What is this doing?
+    //    var len = 0
+    //    def +=(x: Fields) = {
+    //      this(len) = x
+    //      len += 1
+    //    }
+    def update(index: Rep[Int], fields: Fields) = (columns, fields).zipped.foreach {
+      // For each pair of buffer and value, call update method of raw array buffer.
+      // Note that the value is wrapped by type Field such as IntField(3)
+      case (IntColumnarBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
+      case (DoubleColumnarBuffer(arrayBuffer), DoubleField(value)) => arrayBuffer(index) = value
+      case (StringColumnarBuffer(stringArray, lengthArray), StringField(value, length)) =>
+        stringArray(index) = value
+        lengthArray(index) = length
+    }
+
+    def apply(index: Rep[Int]) = columns.map {
+      case IntColumnarBuffer(arrayBuffer) => IntField(arrayBuffer(index))
+      case DoubleColumnarBuffer(arrayBuffer) => DoubleField(arrayBuffer(index))
+      case StringColumnarBuffer(stringArray, lengthArray) => StringField(stringArray(index), lengthArray(index))
+    }
+  }
+
 }
