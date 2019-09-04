@@ -152,6 +152,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       attributes.foldLeft(Vector.empty[Attribute]){ (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
     case NestedLoopJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
+    case HashJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case AggregateOp(child, keys, functions) => getAggregateKeysSchema(child, keys) ++ getAggregateFunctionsSchema(child, functions)
   }
 
@@ -243,6 +244,17 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         }
       }
 
+    case HashJoinOp(left, right, leftAttr, rightAttr) =>
+      val hashMap = new LB2HashMultiMap(getSchema(left))
+      execOp(left) { leftRecord =>
+        hashMap.add(Vector(leftRecord(leftAttr)), leftRecord)
+      }
+      execOp(right) { rightRecord =>
+        hashMap(Vector(rightRecord(rightAttr))) foreach { leftRecord =>
+          callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema))
+        }
+      }
+
     case AggregateOp(child, keys, functions) =>
       val keySchema = getAggregateKeysSchema(child, keys)
       val valueSchema = getAggregateFunctionsSchema(child, functions)
@@ -299,6 +311,42 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       for (i <- 0 until next) {
         val index = hashMap(i)
         f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
+      }
+    }
+  }
+
+  class LB2HashMultiMap(valueSchema: Schema) {
+    val hashTableSize = (1 << 8)
+    val bucketSize = (1 << 10)
+    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize)
+    val bucketStatus = NewArray[Int](hashTableSize)
+    for (i <- 0 until hashTableSize: Rep[Range]) {
+      bucketStatus(i) = 0
+    }
+
+    def add(keyFields: Fields, record: Record) = {
+      val bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+      val offset = bucketNumber * bucketSize + bucketStatus(bucketNumber)
+      valuesBuffer(offset) = record.fields
+      bucketStatus(bucketNumber) += 1
+    }
+
+    def apply(keyFields: Fields) = new {
+      // Create anonymous object to allow the following code
+      // hashMap(keys) foreach { callback(record) }
+      def foreach(f: Record => Rep[Unit]): Rep[Unit] = {
+        val bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+        val numberOfRecords = bucketStatus(bucketNumber)
+        val offset = bucketNumber * bucketSize
+        for (i <- offset until (offset + numberOfRecords): Rep[Range]) {
+          f(Record(valuesBuffer(i), valueSchema))
+        }
+        /*
+         TODO: Why we cannot do this?
+        for (i <- offset until (offset + numberOfRecords): Rep[Range]) yield {
+          Record(valuesBuffer(i), valueSchema)
+        }
+        */
       }
     }
   }

@@ -84,10 +84,11 @@ trait OpParser {
       case leftOp ~ _ ~ rightOp ~ _ ~ leftAttr ~ _ ~ rightAttr => NestedLoopJoinOp(leftOp, rightOp, leftAttr, rightAttr)
     }
 
-    def hashJoinOperator: Parser[Operator] =
-      "HashJoin" ~> "(" ~> operatorExceptForProject ~ "," ~ operatorExceptForProject <~ ")" ^^ {
-        case leftOp ~ _ ~ rightOp => HashJoinOp(leftOp, rightOp, "", "")
-      }
+    def hashJoinOperator: Parser[Operator] = "HashJoin" ~>
+      "(" ~> operatorExceptForProject ~ "," ~ operatorExceptForProject ~
+      "," ~ attributeIdentifier ~ "," ~ attributeIdentifier <~ ")" ^^ {
+        case leftOp ~ _ ~ rightOp ~ _ ~ leftAttr ~ _ ~ rightAttr => HashJoinOp(leftOp, rightOp, leftAttr, rightAttr)
+    }
 
     def aggregateOperator: Parser[Operator] =
       "Aggregate" ~> "(" ~> operatorExceptForProject ~ "," ~ keyAttributes ~ "," ~ aggregateFunctions <~ ")" ^^ {
