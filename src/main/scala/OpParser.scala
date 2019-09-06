@@ -12,6 +12,17 @@ trait OpParser {
   case class HashJoinOp(leftChild: Operator, rightChild: Operator, leftAttr: String, rightAttr: String) extends Operator
   case class AggregateOp(childOp: Operator, keys: Seq[String], functions: Seq[AggregateFunction]) extends Operator
   case class SortOp(childOp: Operator, attributes: Seq[String]) extends Operator
+  case class CalculateOp(childOp: Operator, expressions: Seq[RootArithmeticOp]) extends Operator
+
+  abstract class ArithmeticOperator
+  case class RootArithmeticOp(child: ArithmeticOperator, alias: String) extends ArithmeticOperator
+  case class AddOp(leftChild: ArithmeticOperator, rightChild: ArithmeticOperator) extends ArithmeticOperator
+  case class SubOp(leftChild: ArithmeticOperator, rightChild: ArithmeticOperator) extends ArithmeticOperator
+  case class MultiplyOp(leftChild: ArithmeticOperator, rightChild: ArithmeticOperator) extends ArithmeticOperator
+  case class DivideOp(leftChild: ArithmeticOperator, rightChild: ArithmeticOperator) extends ArithmeticOperator
+  case class ParenthesizedOp(child: ArithmeticOperator) extends ArithmeticOperator
+  case class AttributeOp(attribute: String) extends ArithmeticOperator
+  case class ValueOp(v: Value) extends ArithmeticOperator
 
   abstract class AggregateFunction
   case class Count() extends AggregateFunction
@@ -56,7 +67,7 @@ trait OpParser {
     }
 
     def operatorExceptForProject: Parser[Operator] =
-      scanOperator | filterOperator | joinOperator | aggregateOperator | sortOperator ^^ {
+      scanOperator | filterOperator | joinOperator | aggregateOperator | sortOperator | calculateOperator ^^ {
         case op => op
       }
 
@@ -66,6 +77,10 @@ trait OpParser {
 
     def projectOperator: Parser[Operator] = "Project" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeList <~ ")" ^^ {
       case relation ~ "," ~ attrList => ProjectOp(relation, attrList.toVector)
+    }
+
+    def calculateOperator: Parser[Operator] = "Calculate" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeExpList <~ ")" ^^ {
+      case relation ~ "," ~ attrExpList => CalculateOp(relation, attrExpList.toVector)
     }
 
     def scanOperator: Parser[Operator] = "Scan" ~> "(" ~> tableIdentifier ~ "," ~ attributeWithTypeList <~ ")" ^^ {
@@ -144,6 +159,46 @@ trait OpParser {
     def attributeList: Parser[Seq[String]] = repsep(attributeIdentifier, ",")
 
     def attributeIdentifier: Parser[String] = ident
+
+    def attributeExpList: Parser[Seq[RootArithmeticOp]] = repsep(attributeExpressionWithAlias, ",")
+
+    def attributeExpressionWithAlias: Parser[RootArithmeticOp] = attributeExpression ~ "as" ~ ident ^^ {
+      case root ~ _ ~ alias =>  RootArithmeticOp(root, alias)
+    }
+
+    def attributeExpression: Parser[ArithmeticOperator] = term ~ rep("+"~term | "-"~term) ^^ {
+      case opr ~ terms => {
+        var operand = opr
+        terms.foreach {
+          l => l match {
+            case "+" ~ t => { operand = AddOp(operand, t) }
+            case "-" ~ t => { operand = SubOp(operand, t) }
+          }
+        }
+        operand
+      }
+    }
+
+    def term: Parser[ArithmeticOperator] = factor ~ rep("*"~factor | "/"~factor) ^^ {
+      case opr ~ factors => {
+        var operand = opr
+        factors.foreach {
+          l => l match {
+            case "*" ~ f => { operand = MultiplyOp(operand, f) }
+            case "/" ~ f => { operand = DivideOp(operand, f) }
+          }
+        }
+        operand
+      }
+    }
+
+    def factor: Parser[ArithmeticOperator] = attributeOp | valueOp | parenthesizedOp
+
+    def attributeOp: Parser[ArithmeticOperator] = attributeIdentifier ^^ { x => AttributeOp(x) }
+
+    def valueOp: Parser[ArithmeticOperator] = rightTerm ^^ { x => ValueOp(x) } // TODO: The name 'rightTerm' is not appropriate
+
+    def parenthesizedOp: Parser[ArithmeticOperator] = "(" ~> attributeExpression <~ ")" ^^ { x => ParenthesizedOp(x) }
 
     def parseAll(input: String): Operator = parseAll(query, input) match {
       case Success(x, _) => x

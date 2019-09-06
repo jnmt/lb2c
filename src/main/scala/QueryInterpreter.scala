@@ -11,15 +11,57 @@ object QueryInterpreter extends OpParser {
   abstract class Field {
     val value: Any
     def eq(o: Field): Boolean
+    def plus(o: Field): Field
+    def minus(o: Field): Field
+    def multipliedBy(o: Field): Field
+    def dividedBy(o: Field): Field
   }
+
   case class IntField(value: Int) extends Field {
     def eq(o: Field) = o match { case IntField(v) => value == v }
+    def plus(o: Field) = o match {
+      case IntField(v) => IntField(value + v)
+      case DoubleField(v) => DoubleField(value + v)
+    }
+    def minus(o: Field) = o match {
+      case IntField(v) => IntField(value - v)
+      case DoubleField(v) => DoubleField(value - v)
+    }
+    def multipliedBy(o: Field) = o match {
+      case IntField(v) => IntField(value * v)
+      case DoubleField(v) => DoubleField(value * v)
+    }
+    def dividedBy(o: Field) = o match {
+      case IntField(v) => IntField(value / v)
+      case DoubleField(v) => DoubleField(value / v)
+    }
   }
   case class DoubleField(value: Double) extends Field {
     def eq(o: Field) = o match { case DoubleField(v) => value == v }
+    def plus(o: Field) = o match {
+      case IntField(v) => DoubleField(value + v)
+      case DoubleField(v) => DoubleField(value + v)
+    }
+    def minus(o: Field) = o match {
+      case IntField(v) => DoubleField(value - v)
+      case DoubleField(v) => DoubleField(value - v)
+    }
+    def multipliedBy(o: Field) = o match {
+      case IntField(v) => DoubleField(value * v)
+      case DoubleField(v) => DoubleField(value * v)
+    }
+    def dividedBy(o: Field) = o match {
+      case IntField(v) => DoubleField(value / v)
+      case DoubleField(v) => DoubleField(value / v)
+    }
   }
   case class StringField(value: String) extends Field {
     def eq(o: Field) = o match { case StringField(v) => value == v }
+    // TODO: Error handling or define good interface?
+    def plus(o: Field) = StringField(value)
+    def minus(o: Field) = StringField(value)
+    def multipliedBy(o: Field) = StringField(value)
+    def dividedBy(o: Field) = StringField(value)
   }
 
   case class Record(fields: Fields, schema: Schema) {
@@ -55,33 +97,45 @@ object QueryInterpreter extends OpParser {
   def getAggregateFunctionsSchema(child: Operator, functions: Seq[AggregateFunction]): Schema = {
     functions.map {
       _ match {
+        // TODO: Consider whether we have to keep the type information
         case Count() => IntAttribute("count")
         case Max(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"max(${name})")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"max(${name})")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"max(${name})")
           }
         case Min(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"min(${name})")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"min(${name})")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"min(${name})")
           }
         case Sum(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"sum(${name})")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"sum(${name})")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"sum(${name})")
           }
         case Average(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => DoubleAttribute(s"avg(${name})")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"avg(${name})")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"avg(${name})")
           }
       }
     }.toVector
   }
 
+  def getArithmeticOperatorSchema(rootArithmeticOperators: Seq[RootArithmeticOp]): Schema = {
+    rootArithmeticOperators.map { op =>
+      AnyAttribute(op.alias) // TODO: Use appropriate types for arithmetic operators
+    }.toVector
+  }
+
   def getSchema(o: Operator): Schema = o match {
     case ScanOp(_, schema, _) => schema
+    case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
     case ProjectOp(child, attributes) =>
       attributes.foldLeft(Vector.empty[Attribute]){ (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
@@ -141,6 +195,33 @@ object QueryInterpreter extends OpParser {
     }
   }
 
+  def execArithmeticOp(aop: ArithmeticOperator, record: Record): Field = aop match {
+    case RootArithmeticOp(child, _) => execArithmeticOp(child, record)
+    case AddOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a plus b
+    case SubOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a minus b
+    case MultiplyOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a multipliedBy b
+    case DivideOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a dividedBy b
+    case ParenthesizedOp(child) => execArithmeticOp(child, record)
+    case AttributeOp(name) => record(name)
+    case ValueOp(value) =>
+      value match {
+        case Value(x: Int) => IntField(x)
+        case Value(x: Double) => DoubleField(x)
+      }
+  }
+
   def execOp(o: Operator)(callback: Record => Unit): Unit = o match {
     case ScanOp(filename, schema, delimiter) =>
       processCSV(filename, schema, delimiter)(callback)
@@ -148,6 +229,13 @@ object QueryInterpreter extends OpParser {
     case ProjectOp(child, attributeNames) =>
       execOp(child) { record => {
         callback(Record(record(attributeNames), getSchema(o)))
+      } }
+
+    case CalculateOp(child, attributeExpList) =>
+      execOp(child) { record => {
+        val fields = attributeExpList.map{ o => execArithmeticOp(o, record) }
+        val schema = getArithmeticOperatorSchema(attributeExpList)
+        callback(Record(record.fields ++ fields, record.schema ++ schema))
       } }
 
     case FilterOp(child, predicates) =>
