@@ -101,27 +101,27 @@ object QueryInterpreter extends OpParser {
         case Count() => IntAttribute("count")
         case Max(attr) =>
           getSchema(child).find(_.name == attr) match {
-            case Some(IntAttribute(name)) => IntAttribute(s"max(${name})")
-            case Some(DoubleAttribute(name)) => DoubleAttribute(s"max(${name})")
-            case Some(AnyAttribute(name)) => AnyAttribute(s"max(${name})")
+            case Some(IntAttribute(name)) => IntAttribute(s"max_${name}")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"max_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"max_${name}")
           }
         case Min(attr) =>
           getSchema(child).find(_.name == attr) match {
-            case Some(IntAttribute(name)) => IntAttribute(s"min(${name})")
-            case Some(DoubleAttribute(name)) => DoubleAttribute(s"min(${name})")
-            case Some(AnyAttribute(name)) => AnyAttribute(s"min(${name})")
+            case Some(IntAttribute(name)) => IntAttribute(s"min_${name}")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"min_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"min_${name}")
           }
         case Sum(attr) =>
           getSchema(child).find(_.name == attr) match {
-            case Some(IntAttribute(name)) => IntAttribute(s"sum(${name})")
-            case Some(DoubleAttribute(name)) => DoubleAttribute(s"sum(${name})")
-            case Some(AnyAttribute(name)) => AnyAttribute(s"sum(${name})")
+            case Some(IntAttribute(name)) => IntAttribute(s"sum_${name}")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"sum_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"sum_${name}")
           }
         case Average(attr) =>
           getSchema(child).find(_.name == attr) match {
-            case Some(IntAttribute(name)) => DoubleAttribute(s"avg(${name})")
-            case Some(DoubleAttribute(name)) => DoubleAttribute(s"avg(${name})")
-            case Some(AnyAttribute(name)) => AnyAttribute(s"avg(${name})")
+            case Some(IntAttribute(name)) => DoubleAttribute(s"avg_${name}")
+            case Some(DoubleAttribute(name)) => DoubleAttribute(s"avg_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"avg_${name}")
           }
       }
     }.toVector
