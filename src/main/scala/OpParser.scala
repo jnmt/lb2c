@@ -119,10 +119,11 @@ trait OpParser {
 
     def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
 
-    def rightTerm: Parser[Value] =
-      strippedStringLiteral ^^ { x => Value(x) } |
-        decimalNumber ^^ { x => Value(x.toInt) } |
-        floatingPointNumber ^^ { x => Value(x.toDouble) }
+    def rightTerm: Parser[Value] = strippedStringLiteral ^^ { s => Value(s) } | intValue | doubleValue
+
+    def intValue: Parser[Value] = """[0-9]+""".r ^^ { s => Value(s.toInt) }
+
+    def doubleValue: Parser[Value] = """[0-9]*\.[0-9]+""".r ^^ { s => Value(s.toDouble) }
 
     def strippedStringLiteral: Parser[String] = stringLiteral ^^ {
       _ drop 1 dropRight 1
