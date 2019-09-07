@@ -1,5 +1,7 @@
 package lb2c
 
+import java.util.Calendar
+
 import lms.core.stub._
 import lms.core.virtualize
 import lms.macros.SourceContext
@@ -54,6 +56,29 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       DoubleField(num)
     }
 
+    def nextDate(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      var year = 0
+      var month = 0
+      var day = 0
+      while (data(pos) != '-') {
+        year = year * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      while (data(pos) != '-') {
+        month = month * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      while (data(pos) != d) {
+        day = day * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      DateField(year, month, day)
+    }
+
     def hasNext = pos < fl
     def done = close(fd)
   }
@@ -84,6 +109,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def print() = printf("%f", value)
     def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
+  }
+  case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
+    // TODO: value field has year but it is a bit misleading...
+    def print() = printf("%d-%02d-%02d", value, month, day)
+    def hash() = value*10000 + month*100 + day
+    def isEquals(o: Field) = o match { case DateField(y, m, d) => value == y && month == m && day == d }
   }
   case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
     def print() = printf("%f", value/count)
@@ -121,6 +152,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       _ match {
         case x: IntAttribute => s.nextInt(nextDelimiter(x))
         case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
+        case x: DateAttribute => s.nextDate(nextDelimiter(x))
         case x: StringAttribute => s.next(nextDelimiter(x))
       }
     }, schema)
@@ -190,6 +222,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Value(x: Int) => IntField(x)
     case Value(x: Double) => DoubleField(x)
     case Value(x: String) => StringField(x, x.toString.length)
+    case Value(x: Calendar) => DateField(x.get(Calendar.YEAR), x.get(Calendar.MONTH)+1, x.get(Calendar.DAY_OF_MONTH))
   }
 
   def getInitFields(schema: Schema): Fields = {

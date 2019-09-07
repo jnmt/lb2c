@@ -1,5 +1,8 @@
 package lb2c
 
+import java.util.Calendar
+import java.text.DateFormat
+
 trait OpParser {
   type Schema = Vector[Attribute]
 
@@ -36,6 +39,7 @@ trait OpParser {
   case class IntAttribute(name: String) extends Attribute
   case class DoubleAttribute(name: String) extends Attribute
   case class StringAttribute(name: String) extends Attribute
+  case class DateAttribute(name: String) extends Attribute
   case class AverageAttribute(name: String) extends Attribute
   case class AnyAttribute(name: String) extends Attribute
 
@@ -135,11 +139,18 @@ trait OpParser {
 
     def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
 
-    def rightTerm: Parser[Value] = strippedStringLiteral ^^ { s => Value(s) } | intValue | doubleValue
+    def rightTerm: Parser[Value] = intValue | doubleValue | dateValue | strippedStringLiteral ^^ { s => Value(s) }
 
     def intValue: Parser[Value] = """[0-9]+""".r ^^ { s => Value(s.toInt) }
 
     def doubleValue: Parser[Value] = """[0-9]*\.[0-9]+""".r ^^ { s => Value(s.toDouble) }
+
+    def dateValue: Parser[Value] = """\"\d{4}-\d{1,2}-\d{1,2}\"""".r ^^ {
+      case s =>
+        val calendar = Calendar.getInstance
+        calendar.setTime(DateFormat.getDateInstance().parse(s drop 1 dropRight 1 replace("-", "/")))
+        Value(calendar)
+    }
 
     def strippedStringLiteral: Parser[String] = stringLiteral ^^ {
       _ drop 1 dropRight 1
@@ -153,6 +164,7 @@ trait OpParser {
       case "int" ~ name => IntAttribute(name)
       case "double" ~ name => DoubleAttribute(name)
       case "string" ~ name => StringAttribute(name)
+      case "date" ~ name => DateAttribute(name)
     }
 
     def keyAttributes: Parser[Seq[String]] = "keys" ~> "(" ~> repsep(attributeIdentifier, ",") <~ ")"
