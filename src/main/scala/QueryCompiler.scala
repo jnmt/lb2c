@@ -64,6 +64,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
   }
+  case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
+    def print() = printf("%f", value/count)
+    def hash() = (value/count).asInstanceOf[Rep[Long]]
+    def isEquals(o: Field) = o match { case AverageField(v, c) => value/count == v/c }
+  }
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
     def hash(): Rep[Long] = value.HashCode(length)
@@ -139,8 +144,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           }
         case Average(attr) =>
           getSchema(child).find(_.name == attr) match {
-            case Some(IntAttribute(name)) => DoubleAttribute(s"avg_${name}")
-            case Some(DoubleAttribute(name)) => DoubleAttribute(s"avg_${name}")
+            case Some(IntAttribute(name)) => AverageAttribute(s"avg_${name}")
+            case Some(DoubleAttribute(name)) => AverageAttribute(s"avg_${name}")
           }
       }
     }.toVector
@@ -171,6 +176,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       _ match {
         case IntAttribute(_) => IntField(0)
         case DoubleAttribute(_) => DoubleField(0.0)
+        case AverageAttribute(_) => AverageField(0.0, 0)
       }
     }
   }
@@ -207,16 +213,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
             case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
           }
-        //        case Average(attribute: String) =>
-        //          val z = record(attribute)
-        //          val count = hm("_counter_")
-        //          (y, z, count) match {
-        //            // FIXME: Much better way for handling data types?
-        //            case (y: DoubleField, z: IntField, count: IntField) =>
-        //              hm.update(func.toString, DoubleField((y.value * count.value + z.value) / (count.value + 1)))
-        //            case (y: DoubleField, z: DoubleField, count: IntField) =>
-        //              hm.update(func.toString, DoubleField((y.value * count.value + z.value) / (count.value + 1)))
-        //          }
+        case Average(attribute: String) =>
+          val field = record(attribute)
+          (current, field) match {
+            case (current: AverageField, field: IntField) => AverageField(current.value + field.value, current.count + 1)
+            case (current: AverageField, field: DoubleField) => AverageField(current.value + field.value, current.count + 1)
+          }
       }
     }.toVector
   }
@@ -355,12 +357,14 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class IntColumnarBuffer(data: Rep[Array[Int]]) extends ColumnarBuffer
   case class DoubleColumnarBuffer(data: Rep[Array[Double]]) extends ColumnarBuffer
   case class StringColumnarBuffer(data: Rep[Array[String]], len: Rep[Array[Int]]) extends ColumnarBuffer
+  case class AverageColumnarBuffer(data: Rep[Array[Double]], count: Rep[Array[Int]]) extends ColumnarBuffer
 
   class ColumnarRecordBuffer(schema: Schema, size: Int) {
     val columns = schema.map {
       case IntAttribute(_) => IntColumnarBuffer(NewArray[Int](size))
       case DoubleAttribute(_) => DoubleColumnarBuffer(NewArray[Double](size))
       case StringAttribute(_) => StringColumnarBuffer(NewArray[String](size), NewArray[Int](size))
+      case AverageAttribute(_) => AverageColumnarBuffer(NewArray[Double](size), NewArray[Int](size))
     }
 
     // TODO: What is this doing?
@@ -377,12 +381,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case (StringColumnarBuffer(stringArray, lengthArray), StringField(value, length)) =>
         stringArray(index) = value
         lengthArray(index) = length
+      case (AverageColumnarBuffer(sumArray, countArray), AverageField(sum, count)) =>
+        sumArray(index) = sum
+        countArray(index) = count
     }
 
     def apply(index: Rep[Int]) = columns.map {
       case IntColumnarBuffer(arrayBuffer) => IntField(arrayBuffer(index))
       case DoubleColumnarBuffer(arrayBuffer) => DoubleField(arrayBuffer(index))
       case StringColumnarBuffer(stringArray, lengthArray) => StringField(stringArray(index), lengthArray(index))
+      case AverageColumnarBuffer(sumArray, countArray) => AverageField(sumArray(index), countArray(index))
     }
   }
 

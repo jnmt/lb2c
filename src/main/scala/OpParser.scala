@@ -36,6 +36,7 @@ trait OpParser {
   case class IntAttribute(name: String) extends Attribute
   case class DoubleAttribute(name: String) extends Attribute
   case class StringAttribute(name: String) extends Attribute
+  case class AverageAttribute(name: String) extends Attribute
   case class AnyAttribute(name: String) extends Attribute
 
   case class Value(x: Any) extends Term
