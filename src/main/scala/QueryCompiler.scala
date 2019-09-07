@@ -99,27 +99,67 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def print()
     def hash(): Rep[Long]
     def isEquals(o: Field): Rep[Boolean]
+    def isGte(o: Field): Rep[Boolean]
+    def isLte(o: Field): Rep[Boolean]
+    def isGt(o: Field): Rep[Boolean]
+    def isLt(o: Field): Rep[Boolean]
   }
   case class IntField(value: Rep[Int]) extends Field {
     def print() = printf("%d", value)
     def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case IntField(v) => value == v }
+    // TODO: Implement all methods for IntField
+    def isGte(o: Field): Rep[Boolean] = true
+    def isLte(o: Field): Rep[Boolean] = true
+    def isGt(o: Field): Rep[Boolean] = true
+    def isLt(o: Field): Rep[Boolean] = true
   }
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
     def hash() = value.asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
+    // TODO: Implement all methods for DoubleField
+    def isGte(o: Field): Rep[Boolean] = true
+    def isLte(o: Field): Rep[Boolean] = true
+    def isGt(o: Field): Rep[Boolean] = true
+    def isLt(o: Field): Rep[Boolean] = true
   }
   case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
     // TODO: value field has year but it is a bit misleading...
     def print() = printf("%d-%02d-%02d", value, month, day)
     def hash() = value*10000 + month*100 + day
     def isEquals(o: Field) = o match { case DateField(y, m, d) => value == y && month == m && day == d }
+    // TODO: Implement all methods for DateField
+    def isGte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
+      val a = value*10000 + month*100 + day
+      val b = y*10000 + m*100 + d
+      a >= b
+    }
+    def isLte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
+      val a = value*10000 + month*100 + day
+      val b = y*10000 + m*100 + d
+      a <= b
+    }
+    def isGt(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
+      val a = value*10000 + month*100 + day
+      val b = y*10000 + m*100 + d
+      a > b
+    }
+    def isLt(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
+      val a = value*10000 + month*100 + day
+      val b = y*10000 + m*100 + d
+      a < b
+    }
   }
   case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
     def print() = printf("%f", value/count)
     def hash() = (value/count).asInstanceOf[Rep[Long]]
     def isEquals(o: Field) = o match { case AverageField(v, c) => value/count == v/c }
+    // TODO: Implement all methods for AverageField
+    def isGte(o: Field): Rep[Boolean] = true
+    def isLte(o: Field): Rep[Boolean] = true
+    def isGt(o: Field): Rep[Boolean] = true
+    def isLt(o: Field): Rep[Boolean] = true
   }
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
@@ -137,6 +177,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           i == length
         }
     }
+    // TODO: Implement all methods for StringField
+    def isGte(o: Field): Rep[Boolean] = true
+    def isLte(o: Field): Rep[Boolean] = true
+    def isGt(o: Field): Rep[Boolean] = true
+    def isLt(o: Field): Rep[Boolean] = true
   }
 
   case class Record(fields: Fields, schema: Schema) {
@@ -216,6 +261,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def evalPredicate(predicate: Predicate, record: Record): Rep[Boolean] = predicate match {
     case Eq(attr, value) => record(attr.name) isEquals evalTerm(value, record)
+    case Gte(attr, value) => record(attr.name) isGte evalTerm(value, record)
+    case Lte(attr, value) => record(attr.name) isLte evalTerm(value, record)
+    case Gt(attr, value) => record(attr.name) isGt evalTerm(value, record)
+    case Lt(attr, value) => record(attr.name) isLt evalTerm(value, record)
   }
 
   def evalTerm(term: Term, record: Record): Field = term match {
