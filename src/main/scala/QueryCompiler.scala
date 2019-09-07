@@ -2,6 +2,7 @@ package lb2c
 
 import java.util.Calendar
 
+import lb2c.QueryInterpreter.{Record, execArithmeticOp, execOp, getArithmeticOperatorSchema}
 import lms.core.stub._
 import lms.core.virtualize
 import lms.macros.SourceContext
@@ -98,6 +99,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     val value: Any
     def print()
     def hash(): Rep[Long]
+    def plus(o: Field): Field
+    def minus(o: Field): Field
+    def multipliedBy(o: Field): Field
+    def dividedBy(o: Field): Field
     def isEquals(o: Field): Rep[Boolean]
     def isGte(o: Field): Rep[Boolean]
     def isLte(o: Field): Rep[Boolean]
@@ -107,6 +112,22 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class IntField(value: Rep[Int]) extends Field {
     def print() = printf("%d", value)
     def hash() = value.asInstanceOf[Rep[Long]]
+    def plus(o: Field) = o match {
+      case IntField(v) => IntField(value + v)
+      case DoubleField(v) => DoubleField(value + v)
+    }
+    def minus(o: Field) = o match {
+      case IntField(v) => IntField(value - v)
+      case DoubleField(v) => DoubleField(value - v)
+    }
+    def multipliedBy(o: Field) = o match {
+      case IntField(v) => IntField(value * v)
+      case DoubleField(v) => DoubleField(value * v)
+    }
+    def dividedBy(o: Field) = o match {
+      case IntField(v) => IntField(value / v)
+      case DoubleField(v) => DoubleField(value / v)
+    }
     def isEquals(o: Field) = o match { case IntField(v) => value == v }
     // TODO: Implement all methods for IntField
     def isGte(o: Field): Rep[Boolean] = true
@@ -117,6 +138,22 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
     def hash() = value.asInstanceOf[Rep[Long]]
+    def plus(o: Field) = o match {
+      case IntField(v) => DoubleField(value + v)
+      case DoubleField(v) => DoubleField(value + v)
+    }
+    def minus(o: Field) = o match {
+      case IntField(v) => DoubleField(value - v)
+      case DoubleField(v) => DoubleField(value - v)
+    }
+    def multipliedBy(o: Field) = o match {
+      case IntField(v) => DoubleField(value * v)
+      case DoubleField(v) => DoubleField(value * v)
+    }
+    def dividedBy(o: Field) = o match {
+      case IntField(v) => DoubleField(value / v)
+      case DoubleField(v) => DoubleField(value / v)
+    }
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
     // TODO: Implement all methods for DoubleField
     def isGte(o: Field): Rep[Boolean] = true
@@ -128,6 +165,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     // TODO: value field has year but it is a bit misleading...
     def print() = printf("%d-%02d-%02d", value, month, day)
     def hash() = value*10000 + month*100 + day
+    def plus(o: Field): Field = this
+    def minus(o: Field): Field = this
+    def multipliedBy(o: Field): Field = this
+    def dividedBy(o: Field): Field = this
     def isEquals(o: Field) = o match { case DateField(y, m, d) => value == y && month == m && day == d }
     // TODO: Implement all methods for DateField
     def isGte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
@@ -154,6 +195,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
     def print() = printf("%f", value/count)
     def hash() = (value/count).asInstanceOf[Rep[Long]]
+    def plus(o: Field): Field = this
+    def minus(o: Field): Field = this
+    def multipliedBy(o: Field): Field = this
+    def dividedBy(o: Field): Field = this
     def isEquals(o: Field) = o match { case AverageField(v, c) => value/count == v/c }
     // TODO: Implement all methods for AverageField
     def isGte(o: Field): Rep[Boolean] = true
@@ -164,6 +209,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
     def hash(): Rep[Long] = value.HashCode(length)
+    def plus(o: Field): Field = this
+    def minus(o: Field): Field = this
+    def multipliedBy(o: Field): Field = this
+    def dividedBy(o: Field): Field = this
     def isEquals(o: Field) = o match {
       case StringField(operandValue, operandLength) =>
         if (length != operandLength)
@@ -229,28 +278,39 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"max_${name}")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"max_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"max_${name}")
           }
         case Min(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"min_${name}")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"min_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"min_${name}")
           }
         case Sum(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => IntAttribute(s"sum_${name}")
             case Some(DoubleAttribute(name)) => DoubleAttribute(s"sum_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"sum_${name}")
           }
         case Average(attr) =>
           getSchema(child).find(_.name == attr) match {
             case Some(IntAttribute(name)) => AverageAttribute(s"avg_${name}")
             case Some(DoubleAttribute(name)) => AverageAttribute(s"avg_${name}")
+            case Some(AnyAttribute(name)) => AnyAttribute(s"avg_${name}")
           }
       }
     }.toVector
   }
 
+  def getArithmeticOperatorSchema(rootArithmeticOperators: Seq[RootArithmeticOp]): Schema = {
+    rootArithmeticOperators.map { op =>
+      DoubleAttribute(op.alias) // TODO: Use appropriate types for arithmetic operators
+    }.toVector
+  }
+
   def getSchema(o: Operator): Schema = o match {
     case ScanOp(_, schema, _) => schema
+    case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
     case ProjectOp(child, attributes) =>
       attributes.foldLeft(Vector.empty[Attribute]){ (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
@@ -326,9 +386,43 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }.toVector
   }
 
+  def execArithmeticOp(aop: ArithmeticOperator, record: Record): Field = aop match {
+    case RootArithmeticOp(child, _) => execArithmeticOp(child, record)
+    case AddOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a plus b
+    case SubOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a minus b
+    case MultiplyOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a multipliedBy b
+    case DivideOp(leftChild, rightChild) =>
+      val a = execArithmeticOp(leftChild, record)
+      val b = execArithmeticOp(rightChild, record)
+      a dividedBy b
+    case ParenthesizedOp(child) => execArithmeticOp(child, record)
+    case AttributeOp(name) => record(name)
+    case ValueOp(value) =>
+      value match {
+        case Value(x: Int) => IntField(x)
+        case Value(x: Double) => DoubleField(x)
+      }
+  }
+
   def execOp(o: Operator)(callback: Record => Rep[Unit]): Rep[Unit] = o match {
     case ScanOp(filename, schema, delimiter) =>
       processCSV(filename, schema, delimiter)(callback)
+
+    case CalculateOp(child, attributeExpList) =>
+      execOp(child) { record => {
+        val fields = attributeExpList.map{ o => execArithmeticOp(o, record) }
+        val schema = getArithmeticOperatorSchema(attributeExpList)
+        callback(Record(record.fields ++ fields, record.schema ++ schema))
+      } }
 
     case ProjectOp(child, attributeNames) =>
       execOp(child) { record =>
