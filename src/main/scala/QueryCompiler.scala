@@ -33,6 +33,27 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       IntField(num)
     }
 
+    def nextDouble(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      var num = 0.0
+      var decimal = 10.0
+      while (data(pos) != '.' && data(pos) != d) {
+        num = num * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      if (data(pos) != d) {
+        // This number has decimal part
+        pos += 1
+        while (data(pos) != d) {
+          num = num + (data(pos) - '0').toInt/decimal
+          decimal *= 10
+          pos += 1
+        }
+      }
+      pos += 1
+      DoubleField(num)
+    }
+
     def hasNext = pos < fl
     def done = close(fd)
   }
@@ -99,7 +120,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def nextRecord = Record(schema.map{
       _ match {
         case x: IntAttribute => s.nextInt(nextDelimiter(x))
-        //case x: DoubleAttribute => DoubleField(nextDelimiter(x))
+        case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
         case x: StringAttribute => s.next(nextDelimiter(x))
       }
     }, schema)
