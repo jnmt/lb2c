@@ -585,7 +585,6 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def compare(a: Record, b: Record, keys: Seq[String]): Rep[Boolean] = {
-      // TODO: Should be written with more sophisticated
       var i = var_new(0)
       val ltBuffer = NewArray[Boolean](keys.length)
       val eqBuffer = NewArray[Boolean](keys.length)
@@ -594,10 +593,22 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         eqBuffer(i) = a(key) isEquals b(key)
         i += 1
       }
+      /* Do following comparison using loops with LMS
       keys.length match {
         case 1 => ltBuffer(0)
         case 2 => ltBuffer(0) || (eqBuffer(0) && ltBuffer(1))
+        case 3 => ltBuffer(0) || (eqBuffer(0) && ltBuffer(1)) || (eqBuffer(0) && eqBuffer(1) && ltBuffer(2))
       }
+       */
+      var flag: Rep[Boolean] = false
+      for (i <- 0 until keys.length: Range) {
+        var eqFlag: Rep[Boolean] = true
+        for (j <- 0 until i: Range) {
+          eqFlag = eqFlag && eqBuffer(j)
+        }
+        flag = flag || (ltBuffer(i) && eqFlag)
+      }
+      flag
     }
 
     def sort(keys: Seq[String]): Rep[Unit] = {
