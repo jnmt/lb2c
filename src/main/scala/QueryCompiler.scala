@@ -2,7 +2,6 @@ package lb2c
 
 import java.util.Calendar
 
-import lb2c.QueryInterpreter.{Record, execArithmeticOp, execOp, getArithmeticOperatorSchema}
 import lms.core.stub._
 import lms.core.virtualize
 import lms.macros.SourceContext
@@ -104,6 +103,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def multipliedBy(o: Field): Field
     def dividedBy(o: Field): Field
     def isEquals(o: Field): Rep[Boolean]
+    def isNotEquals(o: Field): Rep[Boolean]
     def isGte(o: Field): Rep[Boolean]
     def isLte(o: Field): Rep[Boolean]
     def isGt(o: Field): Rep[Boolean]
@@ -129,11 +129,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case DoubleField(v) => DoubleField(value / v)
     }
     def isEquals(o: Field) = o match { case IntField(v) => value == v }
+    def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for IntField
-    def isGte(o: Field): Rep[Boolean] = true
-    def isLte(o: Field): Rep[Boolean] = true
-    def isGt(o: Field): Rep[Boolean] = true
-    def isLt(o: Field): Rep[Boolean] = true
+    def isGte(o: Field): Rep[Boolean] = o match { case IntField(v) => value >= v }
+    def isLte(o: Field): Rep[Boolean] = o match { case IntField(v) => value <= v }
+    def isGt(o: Field): Rep[Boolean] = o match { case IntField(v) => value > v }
+    def isLt(o: Field): Rep[Boolean] = o match { case IntField(v) => value < v }
   }
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
@@ -155,11 +156,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case DoubleField(v) => DoubleField(value / v)
     }
     def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
+    def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for DoubleField
-    def isGte(o: Field): Rep[Boolean] = true
-    def isLte(o: Field): Rep[Boolean] = true
-    def isGt(o: Field): Rep[Boolean] = true
-    def isLt(o: Field): Rep[Boolean] = true
+    def isGte(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value >= v }
+    def isLte(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value <= v }
+    def isGt(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value > v }
+    def isLt(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value < v }
   }
   case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
     // TODO: value field has year but it is a bit misleading...
@@ -170,6 +172,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def multipliedBy(o: Field): Field = this
     def dividedBy(o: Field): Field = this
     def isEquals(o: Field) = o match { case DateField(y, m, d) => value == y && month == m && day == d }
+    def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for DateField
     def isGte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
       val a = value*10000 + month*100 + day
@@ -200,6 +203,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def multipliedBy(o: Field): Field = this
     def dividedBy(o: Field): Field = this
     def isEquals(o: Field) = o match { case AverageField(v, c) => value/count == v/c }
+    def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for AverageField
     def isGte(o: Field): Rep[Boolean] = true
     def isLte(o: Field): Rep[Boolean] = true
@@ -226,11 +230,19 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           i == length
         }
     }
+    def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for StringField
     def isGte(o: Field): Rep[Boolean] = true
     def isLte(o: Field): Rep[Boolean] = true
     def isGt(o: Field): Rep[Boolean] = true
-    def isLt(o: Field): Rep[Boolean] = true
+    def isLt(o: Field): Rep[Boolean] = o match {
+      case StringField(operandValue, operandLength) =>
+        var i = 0
+        while (i < length && i < operandLength && value.charAt(i) == operandValue.charAt(i)) {
+          i += 1
+        }
+        value.charAt(i) < operandValue.charAt(i) // TODO: Need to consider length? e.g., XXX is less than XXXX
+    }
   }
 
   case class Record(fields: Fields, schema: Schema) {
@@ -317,6 +329,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case NestedLoopJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case HashJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case AggregateOp(child, keys, functions) => getAggregateKeysSchema(child, keys) ++ getAggregateFunctionsSchema(child, functions)
+    case SortOp(child, _) => getSchema(child)
   }
 
   def evalPredicate(predicate: Predicate, record: Record): Rep[Boolean] = predicate match {
@@ -468,6 +481,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         callback(_)
       }
 
+    case SortOp(child, keys) =>
+      val result = new SortBuffer(getSchema(child), 1 << 16)
+      execOp(child) { record => {
+        result.add(record)
+      } }
+      result.sort(keys)
+      result foreach {
+        callback(_)
+      }
+
     case PrintOp(child) =>
       val schema = getSchema(child)
       printSchema(schema)
@@ -546,6 +569,53 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           Record(valuesBuffer(i), valueSchema)
         }
         */
+      }
+    }
+  }
+
+  class SortBuffer(schema: Schema, size: Int) {
+    val buffer = new ColumnarRecordBuffer(schema, size)
+    val sortMap = NewArray[Int](size)
+    var len = var_new(0)
+
+    def add(record: Record) = {
+      buffer(len) = record.fields
+      sortMap(len) = len
+      len += 1
+    }
+
+    def compare(a: Record, b: Record, keys: Seq[String]): Rep[Boolean] = {
+      // TODO: Should be written with more sophisticated
+      var i = var_new(0)
+      val ltBuffer = NewArray[Boolean](keys.length)
+      val eqBuffer = NewArray[Boolean](keys.length)
+      keys foreach { key =>
+        ltBuffer(i) = a(key) isLt b(key)
+        eqBuffer(i) = a(key) isEquals b(key)
+        i += 1
+      }
+      keys.length match {
+        case 1 => ltBuffer(0)
+        case 2 => ltBuffer(0) || (eqBuffer(0) && ltBuffer(1))
+      }
+    }
+
+    def sort(keys: Seq[String]): Rep[Unit] = {
+      for (i <- 1 until len: Rep[Range]) {
+        var j = i: Rep[Int]
+        while (j > 0 && compare(Record(buffer(sortMap(j)), schema), Record(buffer(sortMap(j-1)), schema), keys)) {
+          val tmp =  sortMap(j)
+          sortMap(j) = sortMap(j-1)
+          sortMap(j-1) = tmp
+          j -= 1
+        }
+      }
+    }
+
+    def foreach(f: Record => Rep[Unit]) = {
+      for (i <- 0 until len) {
+        val index = sortMap(i)
+        f(Record(buffer(index), schema))
       }
     }
   }
