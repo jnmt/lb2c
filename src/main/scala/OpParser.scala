@@ -139,7 +139,7 @@ trait OpParser {
 
     def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
 
-    def rightTerm: Parser[Value] = intValue | doubleValue | dateValue | strippedStringLiteral ^^ { s => Value(s) }
+    def rightTerm: Parser[Value] = doubleValue | intValue | dateValue | strippedStringLiteral ^^ { s => Value(s) }
 
     def intValue: Parser[Value] = """[0-9]+""".r ^^ { s => Value(s.toInt) }
 
