@@ -155,13 +155,28 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case IntField(v) => DoubleField(value / v)
       case DoubleField(v) => DoubleField(value / v)
     }
-    def isEquals(o: Field) = o match { case DoubleField(v) => value == v }
+    def isEquals(o: Field) = o match {
+      case IntField(v) => value == v
+      case DoubleField(v) => value == v
+    }
     def isNotEquals(o: Field) = !(this isEquals o)
     // TODO: Implement all methods for DoubleField
-    def isGte(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value >= v }
-    def isLte(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value <= v }
-    def isGt(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value > v }
-    def isLt(o: Field): Rep[Boolean] = o match { case DoubleField(v) => value < v }
+    def isGte(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value >= v
+      case DoubleField(v) => value >= v
+    }
+    def isLte(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value <= v
+      case DoubleField(v) => value <= v
+    }
+    def isGt(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value > v
+      case DoubleField(v) => value > v
+    }
+    def isLt(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value < v
+      case DoubleField(v) => value < v
+    }
   }
   case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
     // TODO: value field has year but it is a bit misleading...
@@ -449,9 +464,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
         //  ```
         // So, use foreach with Rep[Boolean] flag.
-        var flag: Rep[Boolean] = false
+        var flag: Rep[Boolean] = true
         predicates.foreach { predicate =>
-          flag = flag || evalPredicate(predicate, record)
+          flag = flag && evalPredicate(predicate, record)
         }
         if (flag) callback(record)
       }
