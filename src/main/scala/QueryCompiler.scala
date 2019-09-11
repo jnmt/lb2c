@@ -444,8 +444,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     case FilterOp(child, predicates) =>
       execOp(child) { record =>
-        //if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-        if (evalPredicate(predicates(0), record)) callback(record) // FIXME
+        //  We cannot do like below because LMS seems not to support forall method.
+        //  ```
+        //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+        //  ```
+        // So, use foreach with Rep[Boolean] flag.
+        var flag: Rep[Boolean] = false
+        predicates.foreach { predicate =>
+          flag = flag || evalPredicate(predicate, record)
+        }
+        if (flag) callback(record)
       }
 
     case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
