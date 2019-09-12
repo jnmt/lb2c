@@ -362,14 +362,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Value(x: Calendar) => DateField(x.get(Calendar.YEAR), x.get(Calendar.MONTH)+1, x.get(Calendar.DAY_OF_MONTH))
   }
 
-  def getInitFields(schema: Schema): Fields = {
-    schema.map {
+  def getInitFields(functions: Seq[AggregateFunction]): Fields = {
+    functions.map {
       _ match {
-        case IntAttribute(_) => IntField(0)
-        case DoubleAttribute(_) => DoubleField(0.0)
-        case AverageAttribute(_) => AverageField(0.0, 0)
+        case Count() => IntField(0)
+        case Max(_) => IntField(0)
+        case Min(_) => IntField(2147483647) // FIXME: Int.MaxValue is not implemented in LMS...
+        case Sum(_) => IntField(0)
+        case Average(_) => AverageField(0.0, 0)
       }
-    }
+    }.toVector
   }
 
   def execAggregation(functions: Seq[AggregateFunction], currentFields: Fields, record: Record): Fields = {
@@ -385,6 +387,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             // TODO: Why we cannot write like this? "=> if (current.value < field.value) field else current"
             case (current: IntField, field: IntField) =>
               IntField(if (current.value < field.value) field.value else current.value)
+            case (current: IntField, field: DoubleField) =>
+              val x = DoubleField(current.value) // TODO: Good way to cast?
+              DoubleField(if (x.value < field.value) field.value else x.value)
             case (current: DoubleField, field: DoubleField) =>
               DoubleField(if (current.value < field.value) field.value else current.value)
           }
@@ -393,6 +398,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           (current, field) match {
             case (current: IntField, field: IntField) =>
               IntField(if (current.value > field.value) field.value else current.value)
+            case (current: IntField, field: DoubleField) =>
+              val x = DoubleField(current.value) // TODO: Good way to cast?
+              DoubleField(if (x.value > field.value) field.value else x.value)
             case (current: DoubleField, field: DoubleField) =>
               DoubleField(if (current.value > field.value) field.value else current.value)
           }
@@ -496,7 +504,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val hashMap = new LB2HashMap(keySchema, valueSchema)
       execOp(child) { record => {
         val valuesAsKey = record(keys)
-        val initFields = getInitFields(valueSchema) // FIXME
+        val initFields = getInitFields(functions)
         hashMap.update(valuesAsKey, initFields) { currentFields => execAggregation(functions, currentFields, record) }
       }
       }
