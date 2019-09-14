@@ -666,6 +666,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class IntColumnarBuffer(data: Rep[Array[Int]]) extends ColumnarBuffer
   case class DoubleColumnarBuffer(data: Rep[Array[Double]]) extends ColumnarBuffer
   case class StringColumnarBuffer(data: Rep[Array[String]], len: Rep[Array[Int]]) extends ColumnarBuffer
+  case class DateColumnarBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) extends ColumnarBuffer
   case class AverageColumnarBuffer(data: Rep[Array[Double]], count: Rep[Array[Int]]) extends ColumnarBuffer
 
   class ColumnarRecordBuffer(schema: Schema, size: Int) {
@@ -673,6 +674,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case IntAttribute(_) => IntColumnarBuffer(NewArray[Int](size))
       case DoubleAttribute(_) => DoubleColumnarBuffer(NewArray[Double](size))
       case StringAttribute(_) => StringColumnarBuffer(NewArray[String](size), NewArray[Int](size))
+      case DateAttribute(_) => DateColumnarBuffer(NewArray[Int](size), NewArray[Int](size), NewArray[Int](size))
       case AverageAttribute(_) => AverageColumnarBuffer(NewArray[Double](size), NewArray[Int](size))
     }
 
@@ -690,6 +692,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case (StringColumnarBuffer(stringArray, lengthArray), StringField(value, length)) =>
         stringArray(index) = value
         lengthArray(index) = length
+      case (DateColumnarBuffer(yearArray, monthArray, dayArray), DateField(year, month, day)) =>
+        yearArray(index) = year
+        monthArray(index) = month
+        dayArray(index) = day
       case (AverageColumnarBuffer(sumArray, countArray), AverageField(sum, count)) =>
         sumArray(index) = sum
         countArray(index) = count
@@ -699,6 +705,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case IntColumnarBuffer(arrayBuffer) => IntField(arrayBuffer(index))
       case DoubleColumnarBuffer(arrayBuffer) => DoubleField(arrayBuffer(index))
       case StringColumnarBuffer(stringArray, lengthArray) => StringField(stringArray(index), lengthArray(index))
+      case DateColumnarBuffer(yearArray, monthArray, dayArray) => DateField(yearArray(index), monthArray(index), dayArray(index))
       case AverageColumnarBuffer(sumArray, countArray) => AverageField(sumArray(index), countArray(index))
     }
   }
