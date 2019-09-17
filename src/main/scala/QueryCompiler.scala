@@ -13,7 +13,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   class Scanner(name: Rep[String]) {
     val fd = open(name)
     val fl = filelen(fd)
-    val data = mmap[Char](fd,fl)
+    val data = mmap[Char](fd, fl)
     var pos = 0
 
     def next(d: Rep[Char]) = {
@@ -21,7 +21,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       while (data(pos) != d) pos += 1
       val len = pos - start
       pos += 1
-      StringField(stringFromCharArray(data,start,len), len)
+      StringField(stringFromCharArray(data, start, len), len)
     }
 
     def nextInt(d: Rep[Char]) = {
@@ -47,7 +47,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         // This number has decimal part
         pos += 1
         while (data(pos) != d) {
-          num = num + (data(pos) - '0').toInt/decimal
+          num = num + (data(pos) - '0').toInt / decimal
           decimal *= 10
           pos += 1
         }
@@ -80,6 +80,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def hasNext = pos < fl
+
     def done = close(fd)
   }
 
@@ -92,152 +93,238 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
    */
 
   type Fields = Vector[Field]
+
   def Fields(fields: Seq[Field]): Fields = fields.toVector
 
   abstract class Field {
     val value: Any
+
     def print()
+
     def hash(): Rep[Long]
+
     def plus(o: Field): Field
+
     def minus(o: Field): Field
+
     def multipliedBy(o: Field): Field
+
     def dividedBy(o: Field): Field
+
     def isEquals(o: Field): Rep[Boolean]
+
     def isNotEquals(o: Field): Rep[Boolean]
+
     def isGte(o: Field): Rep[Boolean]
+
     def isLte(o: Field): Rep[Boolean]
+
     def isGt(o: Field): Rep[Boolean]
+
     def isLt(o: Field): Rep[Boolean]
   }
+
   case class IntField(value: Rep[Int]) extends Field {
     def print() = printf("%d", value)
+
     def hash() = value.asInstanceOf[Rep[Long]]
+
     def plus(o: Field) = o match {
       case IntField(v) => IntField(value + v)
       case DoubleField(v) => DoubleField(value + v)
     }
+
     def minus(o: Field) = o match {
       case IntField(v) => IntField(value - v)
       case DoubleField(v) => DoubleField(value - v)
     }
+
     def multipliedBy(o: Field) = o match {
       case IntField(v) => IntField(value * v)
       case DoubleField(v) => DoubleField(value * v)
     }
+
     def dividedBy(o: Field) = o match {
       case IntField(v) => IntField(value / v)
       case DoubleField(v) => DoubleField(value / v)
     }
-    def isEquals(o: Field) = o match { case IntField(v) => value == v }
+
+    def isEquals(o: Field) = o match {
+      case IntField(v) => value == v
+    }
+
     def isNotEquals(o: Field) = !(this isEquals o)
+
     // TODO: Implement all methods for IntField
-    def isGte(o: Field): Rep[Boolean] = o match { case IntField(v) => value >= v }
-    def isLte(o: Field): Rep[Boolean] = o match { case IntField(v) => value <= v }
-    def isGt(o: Field): Rep[Boolean] = o match { case IntField(v) => value > v }
-    def isLt(o: Field): Rep[Boolean] = o match { case IntField(v) => value < v }
+    def isGte(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value >= v
+    }
+
+    def isLte(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value <= v
+    }
+
+    def isGt(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value > v
+    }
+
+    def isLt(o: Field): Rep[Boolean] = o match {
+      case IntField(v) => value < v
+    }
   }
+
   case class DoubleField(value: Rep[Double]) extends Field {
     def print() = printf("%f", value)
+
     def hash() = value.asInstanceOf[Rep[Long]]
+
     def plus(o: Field) = o match {
       case IntField(v) => DoubleField(value + v)
       case DoubleField(v) => DoubleField(value + v)
     }
+
     def minus(o: Field) = o match {
       case IntField(v) => DoubleField(value - v)
       case DoubleField(v) => DoubleField(value - v)
     }
+
     def multipliedBy(o: Field) = o match {
       case IntField(v) => DoubleField(value * v)
       case DoubleField(v) => DoubleField(value * v)
     }
+
     def dividedBy(o: Field) = o match {
       case IntField(v) => DoubleField(value / v)
       case DoubleField(v) => DoubleField(value / v)
     }
+
     def isEquals(o: Field) = o match {
       case IntField(v) => value == v
       case DoubleField(v) => value == v
     }
+
     def isNotEquals(o: Field) = !(this isEquals o)
+
     // TODO: Implement all methods for DoubleField
     def isGte(o: Field): Rep[Boolean] = o match {
       case IntField(v) => value >= v
       case DoubleField(v) => value >= v
     }
+
     def isLte(o: Field): Rep[Boolean] = o match {
       case IntField(v) => value <= v
       case DoubleField(v) => value <= v
     }
+
     def isGt(o: Field): Rep[Boolean] = o match {
       case IntField(v) => value > v
       case DoubleField(v) => value > v
     }
+
     def isLt(o: Field): Rep[Boolean] = o match {
       case IntField(v) => value < v
       case DoubleField(v) => value < v
     }
   }
+
   case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
     // TODO: value field has year but it is a bit misleading...
     def print() = printf("%d-%02d-%02d", value, month, day)
-    def hash() = value*10000 + month*100 + day
+
+    def hash() = value * 10000 + month * 100 + day
+
     def plus(o: Field): Field = this
+
     def minus(o: Field): Field = this
+
     def multipliedBy(o: Field): Field = this
+
     def dividedBy(o: Field): Field = this
-    def isEquals(o: Field) = o match { case DateField(y, m, d) => value == y && month == m && day == d }
+
+    def isEquals(o: Field) = o match {
+      case DateField(y, m, d) => value == y && month == m && day == d
+    }
+
     def isNotEquals(o: Field) = !(this isEquals o)
+
     // TODO: Implement all methods for DateField
-    def isGte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
-      val a = value*10000 + month*100 + day
-      val b = y*10000 + m*100 + d
-      a >= b
+    def isGte(o: Field): Rep[Boolean] = o match {
+      case DateField(y, m, d) =>
+        val a = value * 10000 + month * 100 + day
+        val b = y * 10000 + m * 100 + d
+        a >= b
     }
-    def isLte(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
-      val a = value*10000 + month*100 + day
-      val b = y*10000 + m*100 + d
-      a <= b
+
+    def isLte(o: Field): Rep[Boolean] = o match {
+      case DateField(y, m, d) =>
+        val a = value * 10000 + month * 100 + day
+        val b = y * 10000 + m * 100 + d
+        a <= b
     }
-    def isGt(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
-      val a = value*10000 + month*100 + day
-      val b = y*10000 + m*100 + d
-      a > b
+
+    def isGt(o: Field): Rep[Boolean] = o match {
+      case DateField(y, m, d) =>
+        val a = value * 10000 + month * 100 + day
+        val b = y * 10000 + m * 100 + d
+        a > b
     }
-    def isLt(o: Field): Rep[Boolean] = o match { case DateField(y, m, d) =>
-      val a = value*10000 + month*100 + day
-      val b = y*10000 + m*100 + d
-      a < b
+
+    def isLt(o: Field): Rep[Boolean] = o match {
+      case DateField(y, m, d) =>
+        val a = value * 10000 + month * 100 + day
+        val b = y * 10000 + m * 100 + d
+        a < b
     }
   }
+
   case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
-    def print() = printf("%f", value/count)
-    def hash() = (value/count).asInstanceOf[Rep[Long]]
+    def print() = printf("%f", value / count)
+
+    def hash() = (value / count).asInstanceOf[Rep[Long]]
+
     def plus(o: Field): Field = this
+
     def minus(o: Field): Field = this
+
     def multipliedBy(o: Field): Field = this
+
     def dividedBy(o: Field): Field = this
-    def isEquals(o: Field) = o match { case AverageField(v, c) => value/count == v/c }
+
+    def isEquals(o: Field) = o match {
+      case AverageField(v, c) => value / count == v / c
+    }
+
     def isNotEquals(o: Field) = !(this isEquals o)
+
     // TODO: Implement all methods for AverageField
     def isGte(o: Field): Rep[Boolean] = true
+
     def isLte(o: Field): Rep[Boolean] = true
+
     def isGt(o: Field): Rep[Boolean] = true
+
     def isLt(o: Field): Rep[Boolean] = true
   }
+
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
     def print() = prints(value)
+
     def hash(): Rep[Long] = value.HashCode(length)
+
     def plus(o: Field): Field = this
+
     def minus(o: Field): Field = this
+
     def multipliedBy(o: Field): Field = this
+
     def dividedBy(o: Field): Field = this
+
     def isEquals(o: Field) = o match {
       case StringField(operandValue, operandLength) =>
         if (length != operandLength)
           false
         else {
-         // TODO: we may or may not want to inline this (code bloat and icache considerations).
+          // TODO: we may or may not want to inline this (code bloat and icache considerations).
           var i = 0
           while (i < length && value.charAt(i) == operandValue.charAt(i)) {
             i += 1
@@ -245,11 +332,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           i == length
         }
     }
+
     def isNotEquals(o: Field) = !(this isEquals o)
+
     // TODO: Implement all methods for StringField
     def isGte(o: Field): Rep[Boolean] = true
+
     def isLte(o: Field): Rep[Boolean] = true
+
     def isGt(o: Field): Rep[Boolean] = true
+
     def isLt(o: Field): Rep[Boolean] = o match {
       case StringField(operandValue, operandLength) =>
         var i = 0
@@ -268,8 +360,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   def processCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: Record => Rep[Unit]): Rep[Unit] = {
     val s = new Scanner(filename)
     val last = schema.last
+
     def nextDelimiter(attribute: Attribute) = if (attribute == last) '\n' else delimiter
-    def nextRecord = Record(schema.map{
+
+    def nextRecord = Record(schema.map {
       _ match {
         case x: IntAttribute => s.nextInt(nextDelimiter(x))
         case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
@@ -277,6 +371,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         case x: StringAttribute => s.next(nextDelimiter(x))
       }
     }, schema)
+
     while (s.hasNext) callback(nextRecord)
     s.done
   }
@@ -339,7 +434,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case ScanOp(_, schema, _) => schema
     case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
     case ProjectOp(child, attributes) =>
-      attributes.foldLeft(Vector.empty[Attribute]){ (result, attr) => result ++ getSchema(child).find(_.name == attr) }
+      attributes.foldLeft(Vector.empty[Attribute]) { (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
     case NestedLoopJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case HashJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
@@ -359,7 +454,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Value(x: Int) => IntField(x)
     case Value(x: Double) => DoubleField(x)
     case Value(x: String) => StringField(x, x.toString.length)
-    case Value(x: Calendar) => DateField(x.get(Calendar.YEAR), x.get(Calendar.MONTH)+1, x.get(Calendar.DAY_OF_MONTH))
+    case Value(x: Calendar) => DateField(x.get(Calendar.YEAR), x.get(Calendar.MONTH) + 1, x.get(Calendar.DAY_OF_MONTH))
   }
 
   def getInitFields(functions: Seq[AggregateFunction]): Fields = {
@@ -454,11 +549,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       processCSV(filename, schema, delimiter)(callback)
 
     case CalculateOp(child, attributeExpList) =>
-      execOp(child) { record => {
-        val fields = attributeExpList.map{ o => execArithmeticOp(o, record) }
+      execOp(child) { record =>
+        val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
         val schema = getArithmeticOperatorSchema(attributeExpList)
         callback(Record(record.fields ++ fields, record.schema ++ schema))
-      } }
+      }
 
     case ProjectOp(child, attributeNames) =>
       execOp(child) { record =>
@@ -488,7 +583,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
 
     case HashJoinOp(left, right, leftAttr, rightAttr) =>
-      val hashMap = new LB2HashMultiMap(getSchema(left))
+      val keySchema = getAggregateKeysSchema(left, Vector(leftAttr))
+      val valueSchema = getSchema(left)
+      val hashMap = new LB2HashMultiMap(keySchema, valueSchema)
       execOp(left) { leftRecord =>
         hashMap.add(Vector(leftRecord(leftAttr)), leftRecord)
       }
@@ -502,11 +599,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val keySchema = getAggregateKeysSchema(child, keys)
       val valueSchema = getAggregateFunctionsSchema(child, functions)
       val hashMap = new LB2HashMap(keySchema, valueSchema)
-      execOp(child) { record => {
+      execOp(child) { record =>
         val valuesAsKey = record(keys)
         val initFields = getInitFields(functions)
         hashMap.update(valuesAsKey, initFields) { currentFields => execAggregation(functions, currentFields, record) }
-      }
       }
       hashMap foreach {
         callback(_)
@@ -514,9 +610,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     case SortOp(child, keys) =>
       val result = new SortBuffer(getSchema(child), 1 << 16)
-      execOp(child) { record => {
+      execOp(child) { record =>
         result.add(record)
-      } }
+      }
       result.sort(keys)
       result foreach {
         callback(_)
@@ -532,8 +628,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def fieldsHash(fields: Fields) = fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }
 
+  def fieldsEqual(a: Fields, b: Fields) = {
+    var flag: Rep[Boolean] = true
+    (a, b).zipped.foreach { (a, b) =>
+      flag = flag && (a isEquals b)
+    }
+    flag
+  }
+
   class LB2HashMap(keySchema: Schema, valueSchema: Schema) {
-    val size = (1 << 10)
+    val size = (1 << 16)
     val keys = new ColumnarRecordBuffer(keySchema, size)
     val vals = new ColumnarRecordBuffer(valueSchema, size)
     val used = NewArray[Boolean](size)
@@ -548,7 +652,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       // hm.update(valuesAsKey, initFields){ currentFields => aggregate(currentFields, record) }
       // hm.foreach { record => do_something(record) }
 
-      val index = fieldsHash(keyFields).toInt % size
+      val index = lookup(keyFields)
       if (used(index)) { // if the entry is empty
         vals(index) = updateFunction(vals(index))
       } else {
@@ -560,6 +664,14 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
     }
 
+    def lookup(keyFields: Fields): Rep[Int] = {
+      var index = fieldsHash(keyFields).toInt % size
+      while (used(index) && !fieldsEqual(keys(index), keyFields)) {
+        index += 1
+      }
+      index
+    }
+
     def foreach(f: Record => Rep[Unit]) = {
       for (i <- 0 until next) {
         val index = hashMap(i)
@@ -568,9 +680,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
-  class LB2HashMultiMap(valueSchema: Schema) {
-    val hashTableSize = (1 << 8)
-    val bucketSize = (1 << 10)
+  class LB2HashMultiMap(keySchema: Schema, valueSchema: Schema) {
+    val hashTableSize = (1 << 16)
+    val bucketSize = (1 << 8)
+    val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize)
     val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize)
     val bucketStatus = NewArray[Int](hashTableSize)
     for (i <- 0 until hashTableSize: Rep[Range]) {
@@ -578,17 +691,34 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def add(keyFields: Fields, record: Record) = {
-      val bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+      val bucketNumber = lookup(keyFields)
+      if (bucketNumber > hashTableSize) {
+        printf("Table is full.\n") // TODO: Handle this case correctly
+        exits(1)
+      }
+      if (bucketStatus(bucketNumber) > bucketSize) {
+        printf("Bucket is full.\n") // TODO: Handle this case correctly
+        exits(1)
+      }
       val offset = bucketNumber * bucketSize + bucketStatus(bucketNumber)
+      keysBuffer(bucketNumber) = keyFields
       valuesBuffer(offset) = record.fields
       bucketStatus(bucketNumber) += 1
+    }
+
+    def lookup(keyFields: Fields): Rep[Int] = {
+      var bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+      while (bucketStatus(bucketNumber) > 0 && !fieldsEqual(keysBuffer(bucketNumber), keyFields)) {
+        bucketNumber += 1
+      }
+      bucketNumber
     }
 
     def apply(keyFields: Fields) = new {
       // Create anonymous object to allow the following code
       // hashMap(keys) foreach { callback(record) }
       def foreach(f: Record => Rep[Unit]): Rep[Unit] = {
-        val bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+        val bucketNumber = lookup(keyFields)
         val numberOfRecords = bucketStatus(bucketNumber)
         val offset = bucketNumber * bucketSize
         for (i <- offset until (offset + numberOfRecords): Rep[Range]) {
