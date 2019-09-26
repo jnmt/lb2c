@@ -2,11 +2,8 @@ package lb2c
 
 import java.util.Calendar
 
-import lms.core.stub._
-import lms.core.virtualize
-import lms.macros.SourceContext
+import scala.lms.common._
 
-@virtualize
 trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   val defaultFieldDelimiter = ','
 
@@ -48,7 +45,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         pos += 1
         while (data(pos) != d) {
           num = num + (data(pos) - '0').toInt / decimal
-          decimal *= 10
+          decimal = decimal * 10
           pos += 1
         }
       }
@@ -231,7 +228,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     // TODO: value field has year but it is a bit misleading...
     def print() = printf("%d-%02d-%02d", value, month, day)
 
-    def hash() = value * 10000 + month * 100 + day
+    def hash() = (value * 10000 + month * 100 + day).asInstanceOf[Rep[Long]]
 
     def plus(o: Field): Field = this
 
@@ -693,23 +690,23 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def add(keyFields: Fields, record: Record) = {
       val bucketNumber = lookup(keyFields)
       if (bucketNumber > hashTableSize) {
-        printf("Table is full.\n") // TODO: Handle this case correctly
+        println("Table is full.") // TODO: Handle this case correctly
         exits(1)
       }
       if (bucketStatus(bucketNumber) > bucketSize) {
-        printf("Bucket is full.\n") // TODO: Handle this case correctly
+        println("Bucket is full.") // TODO: Handle this case correctly
         exits(1)
       }
       val offset = bucketNumber * bucketSize + bucketStatus(bucketNumber)
       keysBuffer(bucketNumber) = keyFields
       valuesBuffer(offset) = record.fields
-      bucketStatus(bucketNumber) += 1
+      bucketStatus(bucketNumber) = bucketStatus(bucketNumber) + 1
     }
 
     def lookup(keyFields: Fields): Rep[Int] = {
       var bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
       while (bucketStatus(bucketNumber) > 0 && !fieldsEqual(keysBuffer(bucketNumber), keyFields)) {
-        bucketNumber += 1
+        bucketNumber = bucketNumber + 1
       }
       bucketNumber
     }

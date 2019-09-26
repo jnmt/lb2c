@@ -1,13 +1,11 @@
 package lb2c
 
-import lms.core.stub._
-import lms.core.virtualize
-import lms.macros.SourceContext
+import scala.lms.common._
+import scala.reflect.SourceContext
 
 // TODO: jnmt: Understand the difference between Base and Exp
 // TODO: jnmt: Understand technique of infix_toInt (See also .toInt in nextInt() method)
 
-@virtualize
 trait CLibraryBase extends Base with UncheckedOps { this: Dsl =>
   def open(name: Rep[String]): Rep[Int]
   def close(fd: Rep[Int]): Rep[Unit]
@@ -19,7 +17,6 @@ trait CLibraryBase extends Base with UncheckedOps { this: Dsl =>
   def infix_toInt(c: Rep[Char]): Rep[Int] = c.asInstanceOf[Rep[Int]]
 }
 
-@virtualize
 trait CLibraryExp extends CLibraryBase with UncheckedOpsExp { this: DslExp =>
   def open(name: Rep[String]) = uncheckedPure[Int]("open(",name,",0)")
   def close(fd: Rep[Int]) = unchecked[Unit]("close(",fd,")")
