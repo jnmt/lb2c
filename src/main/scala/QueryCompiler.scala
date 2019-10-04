@@ -9,9 +9,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   class Scanner(name: Rep[String]) {
     val fd = open(name)
-    val fl = filelen(fd)
-    val data = mmap[Char](fd, fl)
+    val fileLength = filelen(fd)
+    val data = mmap[Char](fd, fileLength)
     var pos = 0
+    var end = fileLength
 
     def next(d: Rep[Char]) = {
       val start = pos: Rep[Int] // force read
@@ -76,9 +77,30 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       DateField(year, month, day)
     }
 
-    def hasNext = pos < fl
+    def hasNext = pos < end
 
     def done = close(fd)
+  }
+
+  class ParScanner(name: Rep[String], numThread: Rep[Int]) extends Scanner(name: Rep[String]) {
+    val partitionSize = fileLength/numThread
+
+    def setSection(i: Rep[Int]) = {
+      pos = i * partitionSize
+      end = (i + 1) * partitionSize
+      if (i > 0) {
+        while (data(pos) != '\n' && pos < fileLength) {
+          pos = pos + 1
+        }
+        pos = pos + 1
+      }
+      while (data(end) != '\n' && end < fileLength) {
+        end += 1
+      }
+      end += 1
+    }
+
+    override def hasNext = pos < fileLength && pos < end
   }
 
   /*
@@ -370,6 +392,29 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }, schema)
 
     while (s.hasNext) callback(nextRecord)
+    s.done
+  }
+
+  def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: Record => Rep[Unit]): Rep[Unit] = {
+    val numThread: Rep[Int] = 4
+    val s = new ParScanner(filename, numThread)
+    val last = schema.last
+
+    def nextDelimiter(attribute: Attribute) = if (attribute == last) '\n' else delimiter
+
+    def nextRecord = Record(schema.map {
+      _ match {
+        case x: IntAttribute => s.nextInt(nextDelimiter(x))
+        case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
+        case x: DateAttribute => s.nextDate(nextDelimiter(x))
+        case x: StringAttribute => s.next(nextDelimiter(x))
+      }
+    }, schema)
+
+    for (i <- 0 until numThread) {
+      s.setSection(i)
+      while (s.hasNext) callback(nextRecord)
+    }
     s.done
   }
 
