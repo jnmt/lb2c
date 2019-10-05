@@ -15,6 +15,15 @@ object Run {
     }
 
     engineType match {
+      case "old_compiler" => {
+        val engine = new DslDriverC[Int, Unit] with QueryCompiler with CLibraryExp { q =>
+          override val codegen = new DslGenC with CGenUncheckedOps {
+            val IR: q.type = q
+          }
+          override def snippet(x: Rep[Int]): Rep[Unit] = execQueryOld(query)  // FIXME: Input x is unnecessary...
+        }
+        engine.eval
+      }
       case "compiler" => {
         val engine = new DslDriverC[Int, Unit] with QueryCompiler with CLibraryExp { q =>
           override val codegen = new DslGenC with CGenUncheckedOps {

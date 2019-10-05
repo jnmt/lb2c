@@ -395,7 +395,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     s.done
   }
 
-  def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: Record => Rep[Unit]): Rep[Unit] = {
+  def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: RecordCallback): Rep[Unit] = {
     val numThread: Rep[Int] = 4
     val s = new ParScanner(filename, numThread)
     val last = schema.last
@@ -666,7 +666,120 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       execOp(child) { rec => printFields(rec.fields) }
   }
 
-  def execQuery(query: String): Unit = execOp(parseQuery(query)) { _ => }
+  def execQueryOld(query: String): Unit = execOp(parseQuery(query)) { _ => }
+
+  def execQuery(query: String): Unit = {
+    val queryProcessor = getForeachFunction(parseQuery(query))
+    queryProcessor{ _ => }
+  }
+
+  type RecordCallback = Record => Unit
+  type DataLoop = RecordCallback => Unit
+  def getForeachFunction(o: Operator): DataLoop = o match {
+    case ScanOp(filename, schema, delimiter) =>
+      (callback: RecordCallback) => {
+        parProcessCSV(filename, schema, delimiter)(callback)
+      }
+
+    case CalculateOp(child, attributeExpList) =>
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
+          val schema = getArithmeticOperatorSchema(attributeExpList)
+          callback(Record(record.fields ++ fields, record.schema ++ schema))
+        }
+      }
+
+    case ProjectOp(child, attributeNames) =>
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          callback(Record(record(attributeNames), getSchema(o)))
+        }
+      }
+
+    case FilterOp(child, predicates) =>
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          //  We cannot do like below because LMS seems not to support forall method.
+          //  ```
+          //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+          //  ```
+          // So, use foreach with Rep[Boolean] flag.
+          var flag: Rep[Boolean] = true
+          predicates.foreach { predicate =>
+            flag = flag && evalPredicate(predicate, record)
+          }
+          if (flag) callback(record)
+        }
+      }
+
+    case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
+      val foreachLeftRecord = getForeachFunction(left)
+      val foreachRightRecord = getForeachFunction(right)
+      (callback: RecordCallback) => {
+        foreachLeftRecord { leftRecord =>
+          foreachRightRecord { rightRecord =>
+            if (leftRecord(leftAttr) isEquals rightRecord(rightAttr))
+              callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema))
+          }
+        }
+      }
+
+    case HashJoinOp(left, right, leftAttr, rightAttr) =>
+      val keySchema = getAggregateKeysSchema(left, Vector(leftAttr))
+      val valueSchema = getSchema(left)
+      val hashMap = new LB2HashMultiMap(keySchema, valueSchema)
+      val foreachLeftRecord = getForeachFunction(left)
+      val foreachRightRecord = getForeachFunction(right)
+      (callback: RecordCallback) => {
+        foreachLeftRecord { leftRecord =>
+          hashMap.add(Vector(leftRecord(leftAttr)), leftRecord)
+        }
+        foreachRightRecord { rightRecord =>
+          hashMap(Vector(rightRecord(rightAttr))) foreach { leftRecord =>
+            callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema))
+          }
+        }
+      }
+
+    case AggregateOp(child, keys, functions) =>
+      val keySchema = getAggregateKeysSchema(child, keys)
+      val valueSchema = getAggregateFunctionsSchema(child, functions)
+      val hashMap = new LB2HashMap(keySchema, valueSchema)
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          val valuesAsKey = record(keys)
+          val initFields = getInitFields(functions)
+          hashMap.update(valuesAsKey, initFields) { currentFields => execAggregation(functions, currentFields, record) }
+        }
+        hashMap foreach {
+          callback(_)
+        }
+      }
+
+    case SortOp(child, keys) =>
+      val result = new SortBuffer(getSchema(child), 1 << 16)
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          result.add(record)
+        }
+        result.sort(keys)
+        result foreach {
+          callback(_)
+        }
+      }
+
+    case PrintOp(child) =>
+      val schema = getSchema(child)
+      printSchema(schema)
+      val foreachRecord = getForeachFunction(child)
+      (_: RecordCallback) => { foreachRecord { rec => printFields(rec.fields) } }
+  }
 
   def fieldsHash(fields: Fields) = fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }
 
