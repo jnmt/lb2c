@@ -82,8 +82,14 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def done = close(fd)
   }
 
-  class ParScanner(name: Rep[String], numThread: Rep[Int]) extends Scanner(name: Rep[String]) {
-    val partitionSize = fileLength/numThread
+  class ParScanner(name: Rep[String], threadId: Rep[Int]) {
+    val fd = open(name)
+    val fileLength = filelen(fd)
+    val partitionSize = fileLength/4
+    val data = mmap[Char](fd, fileLength)
+    var pos = 0
+    var end = fileLength
+    setSection(threadId)
 
     def setSection(i: Rep[Int]) = {
       pos = i * partitionSize
@@ -100,7 +106,72 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       end += 1
     }
 
-    override def hasNext = pos < fileLength && pos < end
+    def next(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      while (data(pos) != d) pos += 1
+      val len = pos - start
+      pos += 1
+      StringField(stringFromCharArray(data, start, len), len)
+    }
+
+    def nextInt(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      var num = 0
+      while (data(pos) != d) {
+        num = num * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      IntField(num)
+    }
+
+    def nextDouble(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      var num = 0.0
+      var decimal = 10.0
+      while (data(pos) != '.' && data(pos) != d) {
+        num = num * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      if (data(pos) != d) {
+        // This number has decimal part
+        pos += 1
+        while (data(pos) != d) {
+          num = num + (data(pos) - '0').toInt / decimal
+          decimal = decimal * 10
+          pos += 1
+        }
+      }
+      pos += 1
+      DoubleField(num)
+    }
+
+    def nextDate(d: Rep[Char]) = {
+      val start = pos: Rep[Int] // force read
+      var year = 0
+      var month = 0
+      var day = 0
+      while (data(pos) != '-') {
+        year = year * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      while (data(pos) != '-') {
+        month = month * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      while (data(pos) != d) {
+        day = day * 10 + (data(pos) - '0').toInt
+        pos += 1
+      }
+      pos += 1
+      DateField(year, month, day)
+    }
+
+    def hasNext = pos < fileLength && pos < end
+
+    def done = close(fd)
   }
 
   /*
@@ -376,7 +447,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def apply(keys: Seq[String]): Fields = keys.map(this apply _).toVector
   }
 
-  def processCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: Record => Rep[Unit]): Rep[Unit] = {
+  def processCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: RecordCallback): Rep[Unit] = {
     val s = new Scanner(filename)
     val last = schema.last
 
@@ -395,27 +466,31 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     s.done
   }
 
-  def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(callback: RecordCallback): Rep[Unit] = {
-    val numThread: Rep[Int] = 4
-    val s = new ParScanner(filename, numThread)
-    val last = schema.last
+  def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(threadCallback: ThreadCallback): Rep[Unit] = {
+    parallel {
+      for (i <- 0 until 4) {
+        threadCallback(i)((callback: RecordCallback) => {
+          val s = new ParScanner(filename, i)
+          val last = schema.last
 
-    def nextDelimiter(attribute: Attribute) = if (attribute == last) '\n' else delimiter
+          def nextDelimiter(attribute: Attribute) = if (attribute == last) '\n' else delimiter
 
-    def nextRecord = Record(schema.map {
-      _ match {
-        case x: IntAttribute => s.nextInt(nextDelimiter(x))
-        case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
-        case x: DateAttribute => s.nextDate(nextDelimiter(x))
-        case x: StringAttribute => s.next(nextDelimiter(x))
+          def nextRecord = Record(schema.map {
+            _ match {
+              case x: IntAttribute => s.nextInt(nextDelimiter(x))
+              case x: DoubleAttribute => s.nextDouble(nextDelimiter(x))
+              case x: DateAttribute => s.nextDate(nextDelimiter(x))
+              case x: StringAttribute => s.next(nextDelimiter(x))
+            }
+          }, schema)
+
+          while (s.hasNext)
+            callback(nextRecord)
+
+          s.done
+        })
       }
-    }, schema)
-
-    for (i <- 0 until numThread) {
-      s.setSection(i)
-      while (s.hasNext) callback(nextRecord)
     }
-    s.done
   }
 
   def printSchema(schema: Schema) = println(schema.map(_.name).mkString(defaultFieldDelimiter.toString))
@@ -586,7 +661,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
   }
 
-  def execOp(o: Operator)(callback: Record => Rep[Unit]): Rep[Unit] = o match {
+  def execOp(o: Operator)(callback: RecordCallback): Rep[Unit] = o match {
     case ScanOp(filename, schema, delimiter) =>
       processCSV(filename, schema, delimiter)(callback)
 
@@ -668,17 +743,24 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def execQueryOld(query: String): Unit = execOp(parseQuery(query)) { _ => }
 
+//  def execQuery(query: String): Unit = {
+//    val queryProcessor = getForeachFunction(parseQuery(query))
+//    queryProcessor{ _ => }
+//  }
+
   def execQuery(query: String): Unit = {
-    val queryProcessor = getForeachFunction(parseQuery(query))
-    queryProcessor{ _ => }
+    val queryProcessor = execParOp(parseQuery(query))
+    queryProcessor{ _ => _ => }
   }
 
   type RecordCallback = Record => Unit
   type DataLoop = RecordCallback => Unit
+  type ThreadCallback = Rep[Int] => (DataLoop => Unit)
+  type ParallelSection = ThreadCallback => Unit
   def getForeachFunction(o: Operator): DataLoop = o match {
     case ScanOp(filename, schema, delimiter) =>
       (callback: RecordCallback) => {
-        parProcessCSV(filename, schema, delimiter)(callback)
+        processCSV(filename, schema, delimiter)(callback)
       }
 
     case CalculateOp(child, attributeExpList) =>
@@ -779,6 +861,42 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       printSchema(schema)
       val foreachRecord = getForeachFunction(child)
       (_: RecordCallback) => { foreachRecord { rec => printFields(rec.fields) } }
+  }
+
+  def execParOp(o: Operator): ParallelSection = o match {
+    case ScanOp(filename, schema, delimiter) =>
+      (threadCallback: ThreadCallback) => {
+        parProcessCSV(filename, schema, delimiter)(threadCallback)
+      }
+
+    case FilterOp(child, predicates) =>
+      val parallelSection = execParOp(child)
+      (threadCallback: ThreadCallback) => parallelSection { threadId => foreachRecord =>
+        foreachRecord { record =>
+          //  We cannot do like below because LMS seems not to support forall method.
+          //  ```
+          //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+          //  ```
+          // So, use foreach with Rep[Boolean] flag.
+          var flag: Rep[Boolean] = true
+          predicates.foreach { predicate =>
+            flag = flag && evalPredicate(predicate, record)
+          }
+          if (flag) threadCallback(threadId)((callback: RecordCallback) => callback(record))
+        }
+      }
+
+    case PrintOp(child) =>
+      val schema = getSchema(child)
+      printSchema(schema)
+      val parallelSection = execParOp(child)
+      (_: ThreadCallback) => parallelSection { _ => foreachRecord =>
+        foreachRecord { record =>
+          critical {
+            printFields(record.fields)
+          }
+        }
+      }
   }
 
   def fieldsHash(fields: Fields) = fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }

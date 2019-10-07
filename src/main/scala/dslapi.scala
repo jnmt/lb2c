@@ -46,6 +46,8 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps with LiftString w
     __ifThenElse(lhs, rhs, unit(false))
   def generate_comment(l: String): Rep[Unit]
   def comment[A:Typ](l: String, verbose: Boolean = true)(b: => Rep[A]): Rep[A]
+  def parallel(b: => Rep[Unit]): Rep[Unit]
+  def critical(b: => Rep[Unit]): Rep[Unit]
 }
 
 trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp {
@@ -67,8 +69,24 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     reflectEffect[A](Comment(l, verbose, br), be)
   }
 
+  case class Parallel(b: Block[Unit]) extends Def[Unit]
+  def parallel(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Parallel(br), be)
+  }
+
+  case class Critical(b: Block[Unit]) extends Def[Unit]
+  def critical(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Critical(br), be)
+  }
+
   override def boundSyms(e: Any): List[Sym[Any]] = e match {
     case Comment(_, _, b) => effectSyms(b)
+    case Parallel(b) => effectSyms(b)
+    case Critical(b) => effectSyms(b)
     case _ => super.boundSyms(e)
   }
 
@@ -205,6 +223,14 @@ trait DslGenC extends CGenNumericOps
       emitBlock(b)
       emitValDef(sym, quote(getBlockResult(b)))
       stream.println("//#" + s)
+    case Parallel(b) =>
+      stream.println("#pragma omp parallel for")
+      emitBlock(b)
+    case Critical(b) =>
+      stream.println("#pragma omp critical")
+      stream.println("{")
+      emitBlock(b)
+      stream.println("}")
     case _ => super.emitNode(sym,rhs)
   }
   override def emitSource[A:Typ](args: List[Sym[_]], body: Block[A], functionName: String, out: java.io.PrintWriter) = {
@@ -213,6 +239,7 @@ trait DslGenC extends CGenNumericOps
       #include <fcntl.h>
       #include <errno.h>
       #include <err.h>
+      #include <omp.h>
       #include <sys/mman.h>
       #include <sys/stat.h>
       #include <stdio.h>
@@ -298,7 +325,7 @@ abstract class DslDriverC[A:Manifest,B:Manifest] extends DslSnippet[A,B] with Ds
     //TODO: use precompile
     (new java.io.File("/tmp/snippet")).delete
     import scala.sys.process._
-    (s"cc -std=c99 -O3 /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+    (s"cc -std=c99 -O3 -Xpreprocessor -fopenmp -lomp /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
     (s"/tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
   }
   /*
