@@ -992,7 +992,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
   }
 
-  def fieldsHash(fields: Fields) = fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }
+  def fieldsHash(fields: Fields) = {
+    val hash = (fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }).toInt
+    if (hash >= 0) hash else 0-hash
+  }
 
   def fieldsEqual(a: Fields, b: Fields) = {
     var flag: Rep[Boolean] = true
@@ -1003,7 +1006,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   class LB2HashMap(keySchema: Schema, valueSchema: Schema) {
-    val size = (1 << 16)
+    val size = (1 << 20)
     val keys = new ColumnarRecordBuffer(keySchema, size)
     val vals = new ColumnarRecordBuffer(valueSchema, size)
     val used = NewArray[Boolean](size)
@@ -1019,6 +1022,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       // hm.foreach { record => do_something(record) }
 
       val index = lookup(keyFields)
+      if (index == size - 1) {
+        println("LB2HashMap table is full.") // TODO: Handle this case correctly
+        exits(1)
+      }
       if (used(index)) { // if the entry is empty
         vals(index) = updateFunction(vals(index))
       } else {
@@ -1031,7 +1038,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def lookup(keyFields: Fields): Rep[Int] = {
-      var index = fieldsHash(keyFields).toInt % size
+      var index = fieldsHash(keyFields) % size
       while (used(index) && !fieldsEqual(keys(index), keyFields)) {
         index += 1
       }
@@ -1059,7 +1066,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   class LB2HashMultiMap(keySchema: Schema, valueSchema: Schema) {
-    val hashTableSize = (1 << 16)
+    val hashTableSize = (1 << 18)
     val bucketSize = (1 << 8)
     val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize)
     val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize)
@@ -1070,11 +1077,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     def add(keyFields: Fields, record: Record) = {
       val bucketNumber = lookup(keyFields)
-      if (bucketNumber > hashTableSize) {
-        println("Table is full.") // TODO: Handle this case correctly
+      if (bucketNumber == hashTableSize - 1) {
+        println("LB2HashMultiMap table is full.") // TODO: Handle this case correctly
         exits(1)
       }
-      if (bucketStatus(bucketNumber) > bucketSize) {
+      if (bucketStatus(bucketNumber) == bucketSize - 1) {
         println("Bucket is full.") // TODO: Handle this case correctly
         exits(1)
       }
@@ -1085,7 +1092,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def lookup(keyFields: Fields): Rep[Int] = {
-      var bucketNumber = fieldsHash(keyFields).toInt % hashTableSize
+      var bucketNumber = fieldsHash(keyFields) % hashTableSize
       while (bucketStatus(bucketNumber) > 0 && !fieldsEqual(keysBuffer(bucketNumber), keyFields)) {
         bucketNumber = bucketNumber + 1
       }
@@ -1113,8 +1120,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   class LB2ParHashMap(numberOfThreads: Int, keySchema: Schema, valueSchema: Schema) {
-    val partitionSize = (1 << 14)
-    val size = (1 << 14) * numberOfThreads
+    val partitionSize = (1 << 20)
+    val size = partitionSize * numberOfThreads
     val keys = new ColumnarRecordBuffer(keySchema, size)
     val vals = new ColumnarRecordBuffer(valueSchema, size)
     val used = NewArray[Boolean](size)
@@ -1146,9 +1153,13 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     def lookup(partitionNumber: Rep[Int])(keyFields: Fields): Rep[Int] = {
       val offset = partitionNumber * partitionSize
-      var index = offset + (fieldsHash(keyFields).toInt % partitionSize)
+      var index = offset + (fieldsHash(keyFields) % partitionSize)
       while (used(index) && !fieldsEqual(keys(index), keyFields)) {
         index = index + 1
+      }
+      if (index - offset == partitionSize - 1) {
+        println("Partition is full.") // TODO: Handle this case correctly
+        exits(1)
       }
       index
     }
