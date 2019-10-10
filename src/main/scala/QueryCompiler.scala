@@ -466,9 +466,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     s.done
   }
 
+  val numberOfThreads = 4
   def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(threadCallback: ThreadCallback): Rep[Unit] = {
     parallel {
-      for (i <- 0 until 4) {
+      for (i <- 0 until numberOfThreads) {
         threadCallback(i)((callback: RecordCallback) => {
           val s = new ParScanner(filename, i)
           val last = schema.last
@@ -863,6 +864,63 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       (_: RecordCallback) => { foreachRecord { rec => printFields(rec.fields) } }
   }
 
+  // TODO: Almost same as execAggregation except for count() and average()
+  def execMerge(functions: Seq[AggregateFunction], attributes: Schema, currentFields: Fields, record: Record): Fields = {
+    (functions, attributes, currentFields).zipped.map { (func, attribute, current) =>
+      val name = attribute match {
+        case IntAttribute(n) => n
+        case DoubleAttribute(n) => n
+        case AverageAttribute(n) => n
+        case AnyAttribute(n) => n
+      }
+      val field = record(name)
+      func match {
+        case Count() =>
+          (current, field) match {
+            // FIXME: Much better way for handling data types?
+            case (current: IntField, field: IntField) => IntField(current.value + field.value)
+            case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
+            case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
+          }
+        case Max(_) =>
+          (current, field) match {
+            // TODO: Why we cannot write like this? "=> if (current.value < field.value) field else current"
+            case (current: IntField, field: IntField) =>
+              IntField(if (current.value < field.value) field.value else current.value)
+            case (current: IntField, field: DoubleField) =>
+              val x = DoubleField(current.value) // TODO: Good way to cast?
+              DoubleField(if (x.value < field.value) field.value else x.value)
+            case (current: DoubleField, field: DoubleField) =>
+              DoubleField(if (current.value < field.value) field.value else current.value)
+          }
+        case Min(_) =>
+          (current, field) match {
+            case (current: IntField, field: IntField) =>
+              IntField(if (current.value > field.value) field.value else current.value)
+            case (current: IntField, field: DoubleField) =>
+              val x = DoubleField(current.value) // TODO: Good way to cast?
+              DoubleField(if (x.value > field.value) field.value else x.value)
+            case (current: DoubleField, field: DoubleField) =>
+              DoubleField(if (current.value > field.value) field.value else current.value)
+          }
+        case Sum(_) =>
+          (current, field) match {
+            // FIXME: Much better way for handling data types?
+            case (current: IntField, field: IntField) => IntField(current.value + field.value)
+            case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
+            case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
+          }
+        case Average(_) =>
+          (current, field) match {
+            // FIXME: Average of average is not always same as average of fields
+            case (current: AverageField, field: IntField) => AverageField(current.value + field.value, current.count + 1)
+            case (current: AverageField, field: DoubleField) => AverageField(current.value + field.value, current.count + 1)
+            case (current: AverageField, field: AverageField) => AverageField(current.value + field.value, current.count + field.count)
+          }
+      }
+    }.toVector
+  }
+
   def execParOp(o: Operator): ParallelSection = o match {
     case ScanOp(filename, schema, delimiter) =>
       (threadCallback: ThreadCallback) => {
@@ -871,18 +929,53 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     case FilterOp(child, predicates) =>
       val parallelSection = execParOp(child)
-      (threadCallback: ThreadCallback) => parallelSection { threadId => foreachRecord =>
-        foreachRecord { record =>
-          //  We cannot do like below because LMS seems not to support forall method.
-          //  ```
-          //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-          //  ```
-          // So, use foreach with Rep[Boolean] flag.
-          var flag: Rep[Boolean] = true
-          predicates.foreach { predicate =>
-            flag = flag && evalPredicate(predicate, record)
+      (threadCallback: ThreadCallback) => {
+        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { record =>
+            //  We cannot do like below because LMS seems not to support forall method.
+            //  ```
+            //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+            //  ```
+            // So, use foreach with Rep[Boolean] flag.
+            var flag: Rep[Boolean] = true
+            predicates.foreach { predicate =>
+              flag = flag && evalPredicate(predicate, record)
+            }
+            if (flag) threadCallback(threadId)((callback: RecordCallback) => callback(record))
           }
-          if (flag) threadCallback(threadId)((callback: RecordCallback) => callback(record))
+        }
+      }
+
+    case AggregateOp(child, keys, functions) =>
+      val parallelSection = execParOp(child)
+      val keySchema = getAggregateKeysSchema(child, keys)
+      val valueSchema = getAggregateFunctionsSchema(child, functions)
+      val hashMap = new LB2HashMap(keySchema, valueSchema)
+      val parHashMap = new LB2ParHashMap(numberOfThreads, keySchema, valueSchema)
+      (threadCallback: ThreadCallback) => {
+        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { record =>
+            val valuesAsKey = record(keys)
+            val initFields = getInitFields(functions)
+            parHashMap.update(threadId)(valuesAsKey, initFields) { currentFields =>
+              execAggregation(functions, currentFields, record) }
+          }
+        }
+        wait {
+          for (i <- 0 until numberOfThreads) {
+            parHashMap.foreach(i) { record =>
+              val valuesAsKey = record(keys)
+              val initFields = getInitFields(functions)
+              hashMap.update(valuesAsKey, initFields) { currentFields =>
+                execMerge(functions, valueSchema, currentFields, record) }
+            }
+          }
+        }
+        parallel {
+          for (i <- 0 until numberOfThreads) {
+            threadCallback(i)((callback: RecordCallback) =>
+              hashMap.foreachInPartition(i, numberOfThreads) { callback(_) } )
+          }
         }
       }
 
@@ -951,6 +1044,18 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
       }
     }
+
+    def foreachInPartition(partitionNumber: Rep[Int], numberOfPartitions: Int)(f: Record => Rep[Unit]) = {
+      val assignment = next / numberOfPartitions + 1
+      val start = partitionNumber * assignment
+      var end = (partitionNumber + 1) * assignment
+      if (end > next)
+        end = next
+      for (i <- start until end) {
+        val index = hashMap(i)
+        f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
+      }
+    }
   }
 
   class LB2HashMultiMap(keySchema: Schema, valueSchema: Schema) {
@@ -1003,6 +1108,56 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           Record(valuesBuffer(i), valueSchema)
         }
         */
+      }
+    }
+  }
+
+  class LB2ParHashMap(numberOfThreads: Int, keySchema: Schema, valueSchema: Schema) {
+    val partitionSize = (1 << 14)
+    val size = (1 << 14) * numberOfThreads
+    val keys = new ColumnarRecordBuffer(keySchema, size)
+    val vals = new ColumnarRecordBuffer(valueSchema, size)
+    val used = NewArray[Boolean](size)
+    for (i <- 0 until size: Rep[Range]) {
+      used(i) = false
+    }
+    val hashMap = NewArray[Int](size)
+    val next = NewArray[Int](numberOfThreads)
+    for (i <- 0 until numberOfThreads: Rep[Range]) {
+      next(i) = i * partitionSize
+    }
+
+    def update(partitionNumber: Rep[Int])(keyFields: Fields, init: Fields)(updateFunction: Fields => Fields) = {
+      // Use like this
+      // hm.update(valuesAsKey, initFields){ currentFields => aggregate(currentFields, record) }
+      // hm.foreach { record => do_something(record) }
+
+      val index = lookup(partitionNumber)(keyFields)
+      if (used(index)) { // if the entry is empty
+        vals(index) = updateFunction(vals(index))
+      } else {
+        hashMap(next(partitionNumber)) = index
+        next(partitionNumber) = next(partitionNumber) + 1
+        keys(index) = keyFields
+        vals(index) = updateFunction(init)
+        used(index) = true
+      }
+    }
+
+    def lookup(partitionNumber: Rep[Int])(keyFields: Fields): Rep[Int] = {
+      val offset = partitionNumber * partitionSize
+      var index = offset + (fieldsHash(keyFields).toInt % partitionSize)
+      while (used(index) && !fieldsEqual(keys(index), keyFields)) {
+        index = index + 1
+      }
+      index
+    }
+
+    def foreach(partitionNumber: Rep[Int])(f: Record => Rep[Unit]) = {
+      val offset = partitionNumber * partitionSize
+      for (i <- offset until next(partitionNumber)) {
+        val index = hashMap(i)
+        f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
       }
     }
   }

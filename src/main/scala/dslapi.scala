@@ -48,6 +48,7 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps with LiftString w
   def comment[A:Typ](l: String, verbose: Boolean = true)(b: => Rep[A]): Rep[A]
   def parallel(b: => Rep[Unit]): Rep[Unit]
   def critical(b: => Rep[Unit]): Rep[Unit]
+  def wait(b: => Rep[Unit]): Rep[Unit]
 }
 
 trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp {
@@ -83,10 +84,18 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     reflectEffect[Unit](Critical(br), be)
   }
 
+  case class Wait(b: Block[Unit]) extends Def[Unit]
+  def wait(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Wait(br), be)
+  }
+
   override def boundSyms(e: Any): List[Sym[Any]] = e match {
     case Comment(_, _, b) => effectSyms(b)
     case Parallel(b) => effectSyms(b)
     case Critical(b) => effectSyms(b)
+    case Wait(b) => effectSyms(b)
     case _ => super.boundSyms(e)
   }
 
@@ -231,6 +240,9 @@ trait DslGenC extends CGenNumericOps
       stream.println("{")
       emitBlock(b)
       stream.println("}")
+    case Wait(b) =>
+      stream.println("#pragma omp barrier")
+      emitBlock(b)
     case _ => super.emitNode(sym,rhs)
   }
   override def emitSource[A:Typ](args: List[Sym[_]], body: Block[A], functionName: String, out: java.io.PrintWriter) = {
