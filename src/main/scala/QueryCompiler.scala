@@ -927,6 +927,30 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         parProcessCSV(filename, schema, delimiter)(threadCallback)
       }
 
+    case CalculateOp(child, attributeExpList) =>
+      val parallelSection = execParOp(child)
+      (threadCallback: ThreadCallback) => {
+        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { record =>
+            val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
+            val schema = getArithmeticOperatorSchema(attributeExpList)
+            threadCallback(threadId)((callback: RecordCallback) =>
+              callback(Record(record.fields ++ fields, record.schema ++ schema)))
+          }
+        }
+      }
+
+    case ProjectOp(child, attributeNames) =>
+      val parallelSection = execParOp(child)
+      (threadCallback: ThreadCallback) => {
+        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { record =>
+            threadCallback(threadId)((callback: RecordCallback) =>
+              callback(Record(record(attributeNames), getSchema(o))))
+          }
+        }
+      }
+
     case FilterOp(child, predicates) =>
       val parallelSection = execParOp(child)
       (threadCallback: ThreadCallback) => {
@@ -977,6 +1001,24 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
               hashMap.foreachInPartition(i, numberOfThreads) { callback(_) } )
           }
         }
+      }
+
+    // TODO: Do this in more sophisticate way
+    case SortOp(child, keys) =>
+      val parallelSection = execParOp(child)
+      val result = new SortBuffer(getSchema(child), 1 << 16)
+      (threadCallback: ThreadCallback) => {
+        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { record =>
+            critical {
+              result.add(record)
+            }
+          }
+        }
+        wait {
+          result.sort(keys)
+        }
+        threadCallback(0)((callback: RecordCallback) => result foreach { callback(_) } )
       }
 
     case PrintOp(child) =>
