@@ -970,6 +970,32 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         }
       }
 
+    case HashJoinOp(left, right, leftAttr, rightAttr) =>
+      val parallelSectionLeft = execParOp(left)
+      val parallelSectionRight = execParOp(right)
+      val keySchema = getAggregateKeysSchema(left, Vector(leftAttr))
+      val valueSchema = getSchema(left)
+      val parHashMap = new LB2ParHashMultiMap(numberOfThreads, keySchema, valueSchema)
+      (threadCallback: ThreadCallback) => {
+        parallelSectionLeft { threadId: Rep[Int] => foreachRecord: DataLoop =>
+          foreachRecord { leftRecord =>
+            parHashMap.add(threadId)(Vector(leftRecord(leftAttr)), leftRecord)
+          }
+        }
+        wait {
+          parallelSectionRight { threadId: Rep[Int] => foreachRecord: DataLoop =>
+            foreachRecord { rightRecord =>
+              for (i <- 0 until numberOfThreads) {
+                parHashMap(i)(Vector(rightRecord(rightAttr))) foreach { leftRecord =>
+                  threadCallback(threadId)((callback: RecordCallback) =>
+                    callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema)))
+                }
+              }
+            }
+          }
+        }
+      }
+
     case AggregateOp(child, keys, functions) =>
       val parallelSection = execParOp(child)
       val keySchema = getAggregateKeysSchema(child, keys)
@@ -1211,6 +1237,61 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       for (i <- offset until next(partitionNumber)) {
         val index = hashMap(i)
         f(Record(keys(index) ++ vals(index), keySchema ++ valueSchema))
+      }
+    }
+  }
+
+  class LB2ParHashMultiMap(numberOfThreads: Int, keySchema: Schema, valueSchema: Schema) {
+    val hashTableSize = (1 << 18) // partitioned hash table for each thread
+    val bucketSize = (1 << 8)
+    val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize*numberOfThreads)
+    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize*numberOfThreads)
+    val bucketStatus = NewArray[Int](hashTableSize*numberOfThreads)
+    for (i <- 0 until hashTableSize*numberOfThreads: Rep[Range]) {
+      bucketStatus(i) = 0
+    }
+
+    def add(partitionNumber: Rep[Int])(keyFields: Fields, record: Record) = {
+      val bucketNumber = lookup(partitionNumber)(keyFields)
+      if (bucketNumber == hashTableSize - 1) {
+        println("LB2HashMultiMap table is full.") // TODO: Handle this case correctly
+        exits(1)
+      }
+      if (bucketStatus(bucketNumber) == bucketSize - 1) {
+        println("Bucket is full.") // TODO: Handle this case correctly
+        exits(1)
+      }
+      val offset = bucketNumber * bucketSize + bucketStatus(bucketNumber)
+      keysBuffer(bucketNumber) = keyFields
+      valuesBuffer(offset) = record.fields
+      bucketStatus(bucketNumber) = bucketStatus(bucketNumber) + 1
+    }
+
+    def lookup(partitionNumber: Rep[Int])(keyFields: Fields): Rep[Int] = {
+      val offset = partitionNumber * hashTableSize
+      var bucketNumber = offset + (fieldsHash(keyFields) % hashTableSize)
+      while (bucketStatus(bucketNumber) > 0 && !fieldsEqual(keysBuffer(bucketNumber), keyFields)) {
+        bucketNumber = bucketNumber + 1
+      }
+      bucketNumber
+    }
+
+    def apply(partitionNumber: Rep[Int])(keyFields: Fields) = new {
+      // Create anonymous object to allow the following code
+      // hashMap(keys) foreach { callback(record) }
+      def foreach(f: Record => Rep[Unit]): Rep[Unit] = {
+        val bucketNumber = lookup(partitionNumber)(keyFields)
+        val numberOfRecords = bucketStatus(bucketNumber)
+        val offset = bucketNumber * bucketSize
+        for (i <- offset until (offset + numberOfRecords): Rep[Range]) {
+          f(Record(valuesBuffer(i), valueSchema))
+        }
+        /*
+         TODO: Why we cannot do this?
+        for (i <- offset until (offset + numberOfRecords): Rep[Range]) yield {
+          Record(valuesBuffer(i), valueSchema)
+        }
+        */
       }
     }
   }
