@@ -1042,7 +1042,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           }
         }
         barrier {
-          result.qsort
+          result.qsort_parallel
         }
         threadCallback(0)((callback: RecordCallback) => result foreach { callback(_) } )
       }
@@ -1388,6 +1388,53 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           stackLeft(stackCounter) = i
           stackRight(stackCounter) = right
           stackCounter = stackCounter + 1
+        }
+      }
+    }
+
+    def qsort_parallel: Rep[Unit] = {
+      parallel {
+        single {
+          stackLeft(0) = 0
+          stackRight(0) = len - 1
+          var stackCounter = var_new(1)
+
+          while (stackCounter > 0) {
+            stackCounter = stackCounter - 1
+            val left = stackLeft(stackCounter)
+            val right = stackRight(stackCounter)
+
+            task_wait { // #pragma omp taskwait will be inserted after this block
+              task {
+                var i = left
+                var j = right
+                val pivot = sortMap(median(i, j, i + (j - i) / 2))
+
+                while (i <= j) {
+                  while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
+                  while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+                  if (i <= j) {
+                    swap(i, j)
+                    i = i + 1
+                    j = j - 1
+                  }
+                }
+
+                critical {
+                  if (left < j) {
+                    stackLeft(stackCounter) = left
+                    stackRight(stackCounter) = j
+                    stackCounter = stackCounter + 1
+                  }
+                  if (i < right) {
+                    stackLeft(stackCounter) = i
+                    stackRight(stackCounter) = right
+                    stackCounter = stackCounter + 1
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
