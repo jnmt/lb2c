@@ -731,7 +731,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       execOp(child) { record =>
         result.add(record)
       }
-      result.sort(keys)
+      result.qsort(keys)
       result foreach {
         callback(_)
       }
@@ -1301,12 +1301,18 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     val sortMap = NewArray[Int](size)
     var len = var_new(0)
 
+    // Only for quick sort
+    val stackSize = (1 << 8)
+    val stackLeft = NewArray[Int](stackSize)
+    val stackRight = NewArray[Int](stackSize)
+
     def add(record: Record) = {
       buffer(len) = record.fields
       sortMap(len) = len
       len += 1
     }
 
+    // true if a < b
     def compare(a: Record, b: Record, keys: Seq[String]): Rep[Boolean] = {
       var i = var_new(0)
       val ltBuffer = NewArray[Boolean](keys.length)
@@ -1343,6 +1349,57 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           sortMap(j-1) = tmp
           j -= 1
         }
+      }
+    }
+
+    def qsort(keys: Seq[String]): Rep[Unit] = {
+      stackLeft(0) = 0
+      stackRight(0) = len - 1
+      var stackCounter = var_new(1)
+
+      while (stackCounter > 0) {
+        stackCounter = stackCounter - 1
+        val left = stackLeft(stackCounter)
+        val right = stackRight(stackCounter)
+        var i = left
+        var j = right
+        val pivot = sortMap(median(i, j, i+(j-i)/2, keys))
+
+        while (i <= j) {
+          while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema), keys)) { i = i + 1 }
+          while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema), keys)) { j = j - 1 }
+          if (i <= j) {
+            val tmp = sortMap(i)
+            sortMap(i) = sortMap(j)
+            sortMap(j) = tmp
+            i = i + 1
+            j = j - 1
+          }
+        }
+
+        if (left < j) {
+          stackLeft(stackCounter) = left
+          stackRight(stackCounter) = j
+          stackCounter = stackCounter + 1
+        }
+        if (i < right) {
+          stackLeft(stackCounter) = i
+          stackRight(stackCounter) = right
+          stackCounter = stackCounter + 1
+        }
+      }
+    }
+
+    def median(a: Rep[Int], b: Rep[Int], c: Rep[Int], keys: Seq[String]): Rep[Int] = {
+      // TODO: What's the difference between the cases whether .asInstanceOf[Boolean] is necessary or not?
+      if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(b)), schema), keys)) {
+        if (compare(Record(buffer(sortMap(b)), schema), Record(buffer(sortMap(c)), schema), keys)) b
+        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(a)), schema), keys)) a
+        else c
+      } else {
+        if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(c)), schema), keys)) a
+        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(b)), schema), keys)) b
+        else c
       }
     }
 
