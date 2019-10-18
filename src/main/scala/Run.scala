@@ -33,6 +33,15 @@ object Run {
         }
         engine.eval
       }
+      case "parallel" => {
+        val engine = new DslDriverC[Int, Unit] with QueryCompiler with CLibraryExp { q =>
+          override val codegen = new DslGenC with CGenUncheckedOps {
+            val IR: q.type = q
+          }
+          override def snippet(x: Rep[Int]): Rep[Unit] = execParallel(query)  // FIXME: Input x is unnecessary...
+        }
+        engine.eval
+      }
       case "interpreter" => QueryInterpreter.execQuery(query)
     }
   }

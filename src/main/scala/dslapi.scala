@@ -46,9 +46,13 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps with LiftString w
     __ifThenElse(lhs, rhs, unit(false))
   def generate_comment(l: String): Rep[Unit]
   def comment[A:Typ](l: String, verbose: Boolean = true)(b: => Rep[A]): Rep[A]
+  def single(b: => Rep[Unit]): Rep[Unit]
   def parallel(b: => Rep[Unit]): Rep[Unit]
+  def parallel_for(b: => Rep[Unit]): Rep[Unit]
+  def task(b: => Rep[Unit]): Rep[Unit]
+  def task_wait(b: => Rep[Unit]): Rep[Unit]
   def critical(b: => Rep[Unit]): Rep[Unit]
-  def wait(b: => Rep[Unit]): Rep[Unit]
+  def barrier(b: => Rep[Unit]): Rep[Unit]
 }
 
 trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp {
@@ -70,11 +74,39 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     reflectEffect[A](Comment(l, verbose, br), be)
   }
 
+  case class Single(b: Block[Unit]) extends Def[Unit]
+  def single(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Single(br), be)
+  }
+
   case class Parallel(b: Block[Unit]) extends Def[Unit]
   def parallel(b: => Rep[Unit]): Rep[Unit] = {
     val br = reifyEffects(b)
     val be = summarizeEffects(br)
     reflectEffect[Unit](Parallel(br), be)
+  }
+
+  case class ParallelFor(b: Block[Unit]) extends Def[Unit]
+  def parallel_for(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](ParallelFor(br), be)
+  }
+
+  case class Task(b: Block[Unit]) extends Def[Unit]
+  def task(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Task(br), be)
+  }
+
+  case class TaskWait(b: Block[Unit]) extends Def[Unit]
+  def task_wait(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](TaskWait(br), be)
   }
 
   case class Critical(b: Block[Unit]) extends Def[Unit]
@@ -84,18 +116,22 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     reflectEffect[Unit](Critical(br), be)
   }
 
-  case class Wait(b: Block[Unit]) extends Def[Unit]
-  def wait(b: => Rep[Unit]): Rep[Unit] = {
+  case class Barrier(b: Block[Unit]) extends Def[Unit]
+  def barrier(b: => Rep[Unit]): Rep[Unit] = {
     val br = reifyEffects(b)
     val be = summarizeEffects(br)
-    reflectEffect[Unit](Wait(br), be)
+    reflectEffect[Unit](Barrier(br), be)
   }
 
   override def boundSyms(e: Any): List[Sym[Any]] = e match {
     case Comment(_, _, b) => effectSyms(b)
+    case Single(b) => effectSyms(b)
     case Parallel(b) => effectSyms(b)
+    case ParallelFor(b) => effectSyms(b)
+    case Task(b) => effectSyms(b)
+    case TaskWait(b) => effectSyms(b)
     case Critical(b) => effectSyms(b)
-    case Wait(b) => effectSyms(b)
+    case Barrier(b) => effectSyms(b)
     case _ => super.boundSyms(e)
   }
 
@@ -232,15 +268,33 @@ trait DslGenC extends CGenNumericOps
       emitBlock(b)
       emitValDef(sym, quote(getBlockResult(b)))
       stream.println("//#" + s)
+    case Single(b) =>
+      stream.println("#pragma omp single")
+      stream.println("{")
+      emitBlock(b)
+      stream.println("}")
     case Parallel(b) =>
+      stream.println("#pragma omp parallel")
+      stream.println("{")
+      emitBlock(b)
+      stream.println("}")
+    case ParallelFor(b) =>
       stream.println("#pragma omp parallel for")
       emitBlock(b)
+    case Task(b) =>
+      stream.println("#pragma omp task default (shared)")
+      stream.println("{")
+      emitBlock(b)
+      stream.println("}")
+    case TaskWait(b) =>
+      emitBlock(b)
+      stream.println("#pragma omp taskwait")
     case Critical(b) =>
       stream.println("#pragma omp critical")
       stream.println("{")
       emitBlock(b)
       stream.println("}")
-    case Wait(b) =>
+    case Barrier(b) =>
       stream.println("#pragma omp barrier")
       emitBlock(b)
     case _ => super.emitNode(sym,rhs)

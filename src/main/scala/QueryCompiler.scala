@@ -468,7 +468,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   val numberOfThreads = 4
   def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(threadCallback: ThreadCallback): Rep[Unit] = {
-    parallel {
+    parallel_for {
       for (i <- 0 until numberOfThreads) {
         threadCallback(i)((callback: RecordCallback) => {
           val s = new ParScanner(filename, i)
@@ -744,12 +744,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def execQueryOld(query: String): Unit = execOp(parseQuery(query)) { _ => }
 
-//  def execQuery(query: String): Unit = {
-//    val queryProcessor = getForeachFunction(parseQuery(query))
-//    queryProcessor{ _ => }
-//  }
-
   def execQuery(query: String): Unit = {
+    val queryProcessor = getForeachFunction(parseQuery(query))
+    queryProcessor{ _ => }
+  }
+
+  def execParallel(query: String): Unit = {
     val queryProcessor = execParOp(parseQuery(query))
     queryProcessor{ _ => _ => }
   }
@@ -982,7 +982,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             parHashMap.add(threadId)(Vector(leftRecord(leftAttr)), leftRecord)
           }
         }
-        wait {
+        barrier {
           parallelSectionRight { threadId: Rep[Int] => foreachRecord: DataLoop =>
             foreachRecord { rightRecord =>
               for (i <- 0 until numberOfThreads) {
@@ -1011,7 +1011,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
               execAggregation(functions, currentFields, record) }
           }
         }
-        wait {
+        barrier {
           for (i <- 0 until numberOfThreads) {
             parHashMap.foreach(i) { record =>
               val valuesAsKey = record(keys)
@@ -1021,7 +1021,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             }
           }
         }
-        parallel {
+        parallel_for {
           for (i <- 0 until numberOfThreads) {
             threadCallback(i)((callback: RecordCallback) =>
               hashMap.foreachInPartition(i, numberOfThreads) { callback(_) } )
@@ -1041,7 +1041,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             }
           }
         }
-        wait {
+        barrier {
           result.qsort
         }
         threadCallback(0)((callback: RecordCallback) => result foreach { callback(_) } )
