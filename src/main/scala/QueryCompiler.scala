@@ -727,11 +727,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
 
     case SortOp(child, keys) =>
-      val result = new SortBuffer(getSchema(child), 1 << 16)
+      val result = new SortBuffer(getSchema(child), keys, 1 << 16)
       execOp(child) { record =>
         result.add(record)
       }
-      result.qsort(keys)
+      result.qsort
       result foreach {
         callback(_)
       }
@@ -845,13 +845,13 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
 
     case SortOp(child, keys) =>
-      val result = new SortBuffer(getSchema(child), 1 << 16)
+      val result = new SortBuffer(getSchema(child), keys, 1 << 16)
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
         foreachRecord { record =>
           result.add(record)
         }
-        result.sort(keys)
+        result.qsort
         result foreach {
           callback(_)
         }
@@ -1032,7 +1032,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     // TODO: Do this in more sophisticate way
     case SortOp(child, keys) =>
       val parallelSection = execParOp(child)
-      val result = new SortBuffer(getSchema(child), 1 << 16)
+      val result = new SortBuffer(getSchema(child), keys, 1 << 16)
       (threadCallback: ThreadCallback) => {
         parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
           foreachRecord { record =>
@@ -1042,7 +1042,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           }
         }
         wait {
-          result.sort(keys)
+          result.qsort
         }
         threadCallback(0)((callback: RecordCallback) => result foreach { callback(_) } )
       }
@@ -1296,7 +1296,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
-  class SortBuffer(schema: Schema, size: Int) {
+  class SortBuffer(schema: Schema, keys: Seq[String], size: Int) {
     val buffer = new ColumnarRecordBuffer(schema, size)
     val sortMap = NewArray[Int](size)
     var len = var_new(0)
@@ -1313,7 +1313,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     // true if a < b
-    def compare(a: Record, b: Record, keys: Seq[String]): Rep[Boolean] = {
+    def compare(a: Record, b: Record): Rep[Boolean] = {
       var i = var_new(0)
       val ltBuffer = NewArray[Boolean](keys.length)
       val eqBuffer = NewArray[Boolean](keys.length)
@@ -1340,19 +1340,23 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       flag
     }
 
-    def sort(keys: Seq[String]): Rep[Unit] = {
+    def swap(i: Rep[Int], j: Rep[Int]) = {
+      val tmp = sortMap(i)
+      sortMap(i) = sortMap(j)
+      sortMap(j) = tmp
+    }
+
+    def sort: Rep[Unit] = {
       for (i <- 1 until len: Rep[Range]) {
         var j = i: Rep[Int]
-        while (j > 0 && compare(Record(buffer(sortMap(j)), schema), Record(buffer(sortMap(j-1)), schema), keys)) {
-          val tmp =  sortMap(j)
-          sortMap(j) = sortMap(j-1)
-          sortMap(j-1) = tmp
+        while (j > 0 && compare(Record(buffer(sortMap(j)), schema), Record(buffer(sortMap(j-1)), schema))) {
+          swap(j, j-1)
           j -= 1
         }
       }
     }
 
-    def qsort(keys: Seq[String]): Rep[Unit] = {
+    def qsort: Rep[Unit] = {
       stackLeft(0) = 0
       stackRight(0) = len - 1
       var stackCounter = var_new(1)
@@ -1363,15 +1367,13 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         val right = stackRight(stackCounter)
         var i = left
         var j = right
-        val pivot = sortMap(median(i, j, i+(j-i)/2, keys))
+        val pivot = sortMap(median(i, j, i+(j-i)/2))
 
         while (i <= j) {
-          while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema), keys)) { i = i + 1 }
-          while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema), keys)) { j = j - 1 }
+          while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
+          while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
           if (i <= j) {
-            val tmp = sortMap(i)
-            sortMap(i) = sortMap(j)
-            sortMap(j) = tmp
+            swap(i, j)
             i = i + 1
             j = j - 1
           }
@@ -1390,15 +1392,15 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
     }
 
-    def median(a: Rep[Int], b: Rep[Int], c: Rep[Int], keys: Seq[String]): Rep[Int] = {
+    def median(a: Rep[Int], b: Rep[Int], c: Rep[Int]): Rep[Int] = {
       // TODO: What's the difference between the cases whether .asInstanceOf[Boolean] is necessary or not?
-      if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(b)), schema), keys)) {
-        if (compare(Record(buffer(sortMap(b)), schema), Record(buffer(sortMap(c)), schema), keys)) b
-        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(a)), schema), keys)) a
+      if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(b)), schema))) {
+        if (compare(Record(buffer(sortMap(b)), schema), Record(buffer(sortMap(c)), schema))) b
+        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(a)), schema))) a
         else c
       } else {
-        if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(c)), schema), keys)) a
-        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(b)), schema), keys)) b
+        if (compare(Record(buffer(sortMap(a)), schema), Record(buffer(sortMap(c)), schema))) a
+        else if (compare(Record(buffer(sortMap(c)), schema), Record(buffer(sortMap(b)), schema))) b
         else c
       }
     }
