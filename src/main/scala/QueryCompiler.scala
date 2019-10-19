@@ -1305,6 +1305,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     val stackSize = (1 << 8)
     val stackLeft = NewArray[Int](stackSize)
     val stackRight = NewArray[Int](stackSize)
+    val cutoff = 1000 // TODO: Set appropriate value
 
     def add(record: Record) = {
       buffer(len) = record.fields
@@ -1404,32 +1405,61 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             val left = stackLeft(stackCounter)
             val right = stackRight(stackCounter)
 
-            task_wait { // #pragma omp taskwait will be inserted after this block
-              task {
-                var i = left
-                var j = right
-                val pivot = sortMap(median(i, j, i + (j - i) / 2))
+            if (right - left < cutoff) {
+              // TODO: Clean up code (currently could not make function for this because an error happens in LMS)
+              // If this partition is small, process it with this thread
+              var i = left
+              var j = right
+              val pivot = sortMap(median(i, j, i+(j-i)/2))
 
-                while (i <= j) {
-                  while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
-                  while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
-                  if (i <= j) {
-                    swap(i, j)
-                    i = i + 1
-                    j = j - 1
-                  }
+              while (i <= j) {
+                while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
+                while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+                if (i <= j) {
+                  swap(i, j)
+                  i = i + 1
+                  j = j - 1
                 }
+              }
 
-                critical {
-                  if (left < j) {
-                    stackLeft(stackCounter) = left
-                    stackRight(stackCounter) = j
-                    stackCounter = stackCounter + 1
+              if (left < j) {
+                stackLeft(stackCounter) = left
+                stackRight(stackCounter) = j
+                stackCounter = stackCounter + 1
+              }
+              if (i < right) {
+                stackLeft(stackCounter) = i
+                stackRight(stackCounter) = right
+                stackCounter = stackCounter + 1
+              }
+            } else {
+              task_wait { // #pragma omp taskwait will be inserted after this block
+                task {
+                  var i = left
+                  var j = right
+                  val pivot = sortMap(median(i, j, i + (j - i) / 2))
+
+                  while (i <= j) {
+                    while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
+                    while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+                    if (i <= j) {
+                      swap(i, j)
+                      i = i + 1
+                      j = j - 1
+                    }
                   }
-                  if (i < right) {
-                    stackLeft(stackCounter) = i
-                    stackRight(stackCounter) = right
-                    stackCounter = stackCounter + 1
+
+                  critical {
+                    if (left < j) {
+                      stackLeft(stackCounter) = left
+                      stackRight(stackCounter) = j
+                      stackCounter = stackCounter + 1
+                    }
+                    if (i < right) {
+                      stackLeft(stackCounter) = i
+                      stackRight(stackCounter) = right
+                      stackCounter = stackCounter + 1
+                    }
                   }
                 }
               }
