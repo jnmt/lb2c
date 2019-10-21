@@ -587,6 +587,29 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }.toVector
   }
 
+  def execCalculateInternal(record: Record, attributeExpList: Seq[RootArithmeticOp], callback: RecordCallback): Rep[Unit] = {
+    val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
+    val schema = getArithmeticOperatorSchema(attributeExpList)
+    callback(Record(record.fields ++ fields, record.schema ++ schema))
+  }
+
+  def execProjectInternal(record: Record, attributeNames: Seq[String], o: Operator, callback: RecordCallback): Rep[Unit] = {
+    callback(Record(record(attributeNames), getSchema(o)))
+  }
+
+  def execFilterInternal(record: Record, predicates: Seq[Predicate], callback: RecordCallback): Rep[Unit] = {
+    //  We cannot do like below because LMS seems not to support forall method.
+    //  ```
+    //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+    //  ```
+    // So, use foreach with Rep[Boolean] flag.
+    var flag: Rep[Boolean] = true
+    predicates.foreach { predicate =>
+      flag = flag && evalPredicate(predicate, record)
+    }
+    if (flag) callback(record)
+  }
+
   def execAggregation(functions: Seq[AggregateFunction], currentFields: Fields, record: Record): Fields = {
     (functions, currentFields).zipped.map { (func, current) =>
       func match {
@@ -667,30 +690,13 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       processCSV(filename, schema, delimiter)(callback)
 
     case CalculateOp(child, attributeExpList) =>
-      execOp(child) { record =>
-        val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
-        val schema = getArithmeticOperatorSchema(attributeExpList)
-        callback(Record(record.fields ++ fields, record.schema ++ schema))
-      }
+      execOp(child) { record => execCalculateInternal(record, attributeExpList, callback) }
 
     case ProjectOp(child, attributeNames) =>
-      execOp(child) { record =>
-        callback(Record(record(attributeNames), getSchema(o)))
-      }
+      execOp(child) { record => execProjectInternal(record, attributeNames, o, callback) }
 
     case FilterOp(child, predicates) =>
-      execOp(child) { record =>
-        //  We cannot do like below because LMS seems not to support forall method.
-        //  ```
-        //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-        //  ```
-        // So, use foreach with Rep[Boolean] flag.
-        var flag: Rep[Boolean] = true
-        predicates.foreach { predicate =>
-          flag = flag && evalPredicate(predicate, record)
-        }
-        if (flag) callback(record)
-      }
+      execOp(child) { record => execFilterInternal(record, predicates, callback) }
 
     case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
       execOp(left) { leftRecord =>
@@ -740,6 +746,15 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val schema = getSchema(child)
       printSchema(schema)
       execOp(child) { rec => printFields(rec.fields) }
+
+    case CallbackOp(parent, foreachRecord) =>
+      foreachRecord { record =>
+        parent match {
+          case CalculateOp(_, attributeExpList) => execCalculateInternal(record, attributeExpList, callback)
+          case ProjectOp(_, attributeNames) => execProjectInternal(record, attributeNames, parent, callback)
+          case FilterOp(_, predicates) => execFilterInternal(record, predicates, callback)
+        }
+      }
   }
 
   def execQueryOld(query: String): Unit = execOp(parseQuery(query)) { _ => }
@@ -767,36 +782,19 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case CalculateOp(child, attributeExpList) =>
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
-        foreachRecord { record =>
-          val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
-          val schema = getArithmeticOperatorSchema(attributeExpList)
-          callback(Record(record.fields ++ fields, record.schema ++ schema))
-        }
+        foreachRecord { record => execCalculateInternal(record, attributeExpList, callback) }
       }
 
     case ProjectOp(child, attributeNames) =>
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
-        foreachRecord { record =>
-          callback(Record(record(attributeNames), getSchema(o)))
-        }
+        foreachRecord { record => execProjectInternal(record, attributeNames, o, callback) }
       }
 
     case FilterOp(child, predicates) =>
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
-        foreachRecord { record =>
-          //  We cannot do like below because LMS seems not to support forall method.
-          //  ```
-          //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-          //  ```
-          // So, use foreach with Rep[Boolean] flag.
-          var flag: Rep[Boolean] = true
-          predicates.foreach { predicate =>
-            flag = flag && evalPredicate(predicate, record)
-          }
-          if (flag) callback(record)
-        }
+        foreachRecord { record => execFilterInternal(record, predicates, callback) }
       }
 
     case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
@@ -921,54 +919,25 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }.toVector
   }
 
+  case class CallbackOp(o: Operator, dataloop: DataLoop) extends Operator
+  def getParallelFunction(parent: Operator, child: Operator) = {
+    val parallelSection = execParOp(child)
+    (threadCallback: ThreadCallback) => {
+      parallelSection { threadId: Rep[Int] => dataloop: DataLoop =>
+        threadCallback(threadId)((callback: RecordCallback) => execOp(CallbackOp(parent, dataloop))(callback))
+      }
+    }
+  }
+
   def execParOp(o: Operator): ParallelSection = o match {
     case ScanOp(filename, schema, delimiter) =>
       (threadCallback: ThreadCallback) => {
         parProcessCSV(filename, schema, delimiter)(threadCallback)
       }
 
-    case CalculateOp(child, attributeExpList) =>
-      val parallelSection = execParOp(child)
-      (threadCallback: ThreadCallback) => {
-        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { record =>
-            val fields = attributeExpList.map { o => execArithmeticOp(o, record) }
-            val schema = getArithmeticOperatorSchema(attributeExpList)
-            threadCallback(threadId)((callback: RecordCallback) =>
-              callback(Record(record.fields ++ fields, record.schema ++ schema)))
-          }
-        }
-      }
-
-    case ProjectOp(child, attributeNames) =>
-      val parallelSection = execParOp(child)
-      (threadCallback: ThreadCallback) => {
-        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { record =>
-            threadCallback(threadId)((callback: RecordCallback) =>
-              callback(Record(record(attributeNames), getSchema(o))))
-          }
-        }
-      }
-
-    case FilterOp(child, predicates) =>
-      val parallelSection = execParOp(child)
-      (threadCallback: ThreadCallback) => {
-        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { record =>
-            //  We cannot do like below because LMS seems not to support forall method.
-            //  ```
-            //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-            //  ```
-            // So, use foreach with Rep[Boolean] flag.
-            var flag: Rep[Boolean] = true
-            predicates.foreach { predicate =>
-              flag = flag && evalPredicate(predicate, record)
-            }
-            if (flag) threadCallback(threadId)((callback: RecordCallback) => callback(record))
-          }
-        }
-      }
+    case CalculateOp(child, _) => getParallelFunction(o, child)
+    case ProjectOp(child, _) => getParallelFunction(o, child)
+    case FilterOp(child, _) => getParallelFunction(o, child)
 
     case HashJoinOp(left, right, leftAttr, rightAttr) =>
       val parallelSectionLeft = execParOp(left)
