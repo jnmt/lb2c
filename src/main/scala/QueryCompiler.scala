@@ -85,7 +85,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   class ParScanner(name: Rep[String], threadId: Rep[Int]) {
     val fd = open(name)
     val fileLength = filelen(fd)
-    val partitionSize = fileLength/4
+    val partitionSize = fileLength/num_threads
     val data = mmap[Char](fd, fileLength)
     var pos = 0
     var end = fileLength
@@ -466,7 +466,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     s.done
   }
 
-  val numberOfThreads = 4
+  val numberOfThreads = num_threads
   def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(threadCallback: ThreadCallback): Rep[Unit] = {
     parallel_for {
       for (i <- 0 until numberOfThreads) {
@@ -1043,7 +1043,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   class LB2HashMap(keySchema: Schema, valueSchema: Schema) {
-    val size = (1 << 20)
+    val size = hash_table_size
     val keys = new ColumnarRecordBuffer(keySchema, size)
     val vals = new ColumnarRecordBuffer(valueSchema, size)
     val used = NewArray[Boolean](size)
@@ -1089,7 +1089,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
     }
 
-    def foreachInPartition(partitionNumber: Rep[Int], numberOfPartitions: Int)(f: Record => Rep[Unit]) = {
+    def foreachInPartition(partitionNumber: Rep[Int], numberOfPartitions: Rep[Int])(f: Record => Rep[Unit]) = {
       val assignment = next / numberOfPartitions + 1
       val start = partitionNumber * assignment
       var end = (partitionNumber + 1) * assignment
@@ -1103,8 +1103,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   class LB2HashMultiMap(keySchema: Schema, valueSchema: Schema) {
-    val hashTableSize = (1 << 18)
-    val bucketSize = (1 << 8)
+    val hashTableSize = hash_table_size
+    val bucketSize = bucket_size
     val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize)
     val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize)
     val bucketStatus = NewArray[Int](hashTableSize)
@@ -1156,9 +1156,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
-  class LB2ParHashMap(numberOfThreads: Int, keySchema: Schema, valueSchema: Schema) {
-    val partitionSize = (1 << 20)
-    val size = partitionSize * numberOfThreads
+  class LB2ParHashMap(numberOfThreads: Rep[Int], keySchema: Schema, valueSchema: Schema) {
+    val partitionSize = hash_table_size / numberOfThreads
+    val size = hash_table_size
     val keys = new ColumnarRecordBuffer(keySchema, size)
     val vals = new ColumnarRecordBuffer(valueSchema, size)
     val used = NewArray[Boolean](size)
@@ -1210,9 +1210,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
-  class LB2ParHashMultiMap(numberOfThreads: Int, keySchema: Schema, valueSchema: Schema) {
-    val hashTableSize = (1 << 18) // partitioned hash table for each thread
-    val bucketSize = (1 << 8)
+  class LB2ParHashMultiMap(numberOfThreads: Rep[Int], keySchema: Schema, valueSchema: Schema) {
+    val hashTableSize = hash_table_size / numberOfThreads // partitioned hash table for each thread
+    val bucketSize = bucket_size
     val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize*numberOfThreads)
     val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize*numberOfThreads)
     val bucketStatus = NewArray[Int](hashTableSize*numberOfThreads)
@@ -1466,7 +1466,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   case class DateColumnarBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) extends ColumnarBuffer
   case class AverageColumnarBuffer(data: Rep[Array[Double]], count: Rep[Array[Int]]) extends ColumnarBuffer
 
-  class ColumnarRecordBuffer(schema: Schema, size: Int) {
+  class ColumnarRecordBuffer(schema: Schema, size: Rep[Int]) {
     val columns = schema.map {
       case IntAttribute(_) => IntColumnarBuffer(NewArray[Int](size))
       case DoubleAttribute(_) => DoubleColumnarBuffer(NewArray[Double](size))

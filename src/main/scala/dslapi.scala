@@ -279,7 +279,7 @@ trait DslGenC extends CGenNumericOps
       emitBlock(b)
       stream.println("}")
     case ParallelFor(b) =>
-      stream.println("#pragma omp parallel for")
+      stream.println("#pragma omp parallel for num_threads(NUM_THREADS)")
       emitBlock(b)
     case Task(b) =>
       stream.println("#pragma omp task default (shared)")
@@ -314,6 +314,9 @@ trait DslGenC extends CGenNumericOps
       #ifndef MAP_FILE
       #define MAP_FILE MAP_SHARED
       #endif
+      #define HASH_TABLE_SIZE (1<<22)
+      #define BUCKET_SIZE (1<<8)
+      #define NUM_THREADS 4
       int fsize(int fd) {
         struct stat stat;
         int res = fstat(fd,&stat);
