@@ -85,7 +85,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   class ParScanner(name: Rep[String], threadId: Rep[Int]) {
     val fd = open(name)
     val fileLength = filelen(fd)
-    val partitionSize = fileLength/num_threads
+    val partitionSize = fileLength / num_threads
     val data = mmap[Char](fd, fileLength)
     var pos = 0
     var end = fileLength
@@ -467,6 +467,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   val numberOfThreads = num_threads
+
   def parProcessCSV(filename: Rep[String], schema: Schema, delimiter: Char)(threadCallback: ThreadCallback): Rep[Unit] = {
     parallel_for {
       for (i <- 0 until numberOfThreads) {
@@ -761,18 +762,19 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def execQuery(query: String): Unit = {
     val queryProcessor = getForeachFunction(parseQuery(query))
-    queryProcessor{ _ => }
+    queryProcessor { _ => }
   }
 
   def execParallel(query: String): Unit = {
     val queryProcessor = execParOp(parseQuery(query))
-    queryProcessor{ _ => _ => }
+    queryProcessor { _ => _ => }
   }
 
   type RecordCallback = Record => Unit
   type DataLoop = RecordCallback => Unit
   type ThreadCallback = Rep[Int] => (DataLoop => Unit)
   type ParallelSection = ThreadCallback => Unit
+
   def getForeachFunction(o: Operator): DataLoop = o match {
     case ScanOp(filename, schema, delimiter) =>
       (callback: RecordCallback) => {
@@ -859,7 +861,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val schema = getSchema(child)
       printSchema(schema)
       val foreachRecord = getForeachFunction(child)
-      (_: RecordCallback) => { foreachRecord { rec => printFields(rec.fields) } }
+      (_: RecordCallback) => {
+        foreachRecord { rec => printFields(rec.fields) }
+      }
   }
 
   // TODO: Almost same as execAggregation except for count() and average()
@@ -920,11 +924,13 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   case class CallbackOp(o: Operator, dataloop: DataLoop) extends Operator
+
   def getParallelFunction(parent: Operator, child: Operator) = {
     val parallelSection = execParOp(child)
     (threadCallback: ThreadCallback) => {
-      parallelSection { threadId: Rep[Int] => dataloop: DataLoop =>
-        threadCallback(threadId)((callback: RecordCallback) => execOp(CallbackOp(parent, dataloop))(callback))
+      parallelSection { threadId: Rep[Int] =>
+        dataloop: DataLoop =>
+          threadCallback(threadId)((callback: RecordCallback) => execOp(CallbackOp(parent, dataloop))(callback))
       }
     }
   }
@@ -946,21 +952,23 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val valueSchema = getSchema(left)
       val parHashMap = new LB2ParHashMultiMap(numberOfThreads, keySchema, valueSchema)
       (threadCallback: ThreadCallback) => {
-        parallelSectionLeft { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { leftRecord =>
-            parHashMap.add(threadId)(Vector(leftRecord(leftAttr)), leftRecord)
-          }
+        parallelSectionLeft { threadId: Rep[Int] =>
+          foreachRecord: DataLoop =>
+            foreachRecord { leftRecord =>
+              parHashMap.add(threadId)(Vector(leftRecord(leftAttr)), leftRecord)
+            }
         }
         barrier {
-          parallelSectionRight { threadId: Rep[Int] => foreachRecord: DataLoop =>
-            foreachRecord { rightRecord =>
-              for (i <- 0 until numberOfThreads) {
-                parHashMap(i)(Vector(rightRecord(rightAttr))) foreach { leftRecord =>
-                  threadCallback(threadId)((callback: RecordCallback) =>
-                    callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema)))
+          parallelSectionRight { threadId: Rep[Int] =>
+            foreachRecord: DataLoop =>
+              foreachRecord { rightRecord =>
+                for (i <- 0 until numberOfThreads) {
+                  parHashMap(i)(Vector(rightRecord(rightAttr))) foreach { leftRecord =>
+                    threadCallback(threadId)((callback: RecordCallback) =>
+                      callback(Record(leftRecord.fields ++ rightRecord.fields, leftRecord.schema ++ rightRecord.schema)))
+                  }
                 }
               }
-            }
           }
         }
       }
@@ -972,13 +980,15 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val hashMap = new LB2HashMap(keySchema, valueSchema)
       val parHashMap = new LB2ParHashMap(numberOfThreads, keySchema, valueSchema)
       (threadCallback: ThreadCallback) => {
-        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { record =>
-            val valuesAsKey = record(keys)
-            val initFields = getInitFields(functions)
-            parHashMap.update(threadId)(valuesAsKey, initFields) { currentFields =>
-              execAggregation(functions, currentFields, record) }
-          }
+        parallelSection { threadId: Rep[Int] =>
+          foreachRecord: DataLoop =>
+            foreachRecord { record =>
+              val valuesAsKey = record(keys)
+              val initFields = getInitFields(functions)
+              parHashMap.update(threadId)(valuesAsKey, initFields) { currentFields =>
+                execAggregation(functions, currentFields, record)
+              }
+            }
         }
         barrier {
           for (i <- 0 until numberOfThreads) {
@@ -986,14 +996,17 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
               val valuesAsKey = record(keys)
               val initFields = getInitFields(functions)
               hashMap.update(valuesAsKey, initFields) { currentFields =>
-                execMerge(functions, valueSchema, currentFields, record) }
+                execMerge(functions, valueSchema, currentFields, record)
+              }
             }
           }
         }
         parallel_for {
           for (i <- 0 until numberOfThreads) {
             threadCallback(i)((callback: RecordCallback) =>
-              hashMap.foreachInPartition(i, numberOfThreads) { callback(_) } )
+              hashMap.foreachInPartition(i, numberOfThreads) {
+                callback(_)
+              })
           }
         }
       }
@@ -1003,35 +1016,40 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val parallelSection = execParOp(child)
       val result = new SortBuffer(getSchema(child), keys, 1 << 16)
       (threadCallback: ThreadCallback) => {
-        parallelSection { threadId: Rep[Int] => foreachRecord: DataLoop =>
-          foreachRecord { record =>
-            critical {
-              result.add(record)
+        parallelSection { threadId: Rep[Int] =>
+          foreachRecord: DataLoop =>
+            foreachRecord { record =>
+              critical {
+                result.add(record)
+              }
             }
-          }
         }
         barrier {
           result.qsort_parallel
         }
-        threadCallback(0)((callback: RecordCallback) => result foreach { callback(_) } )
+        threadCallback(0)((callback: RecordCallback) => result foreach {
+          callback(_)
+        })
       }
 
     case PrintOp(child) =>
       val schema = getSchema(child)
       printSchema(schema)
       val parallelSection = execParOp(child)
-      (_: ThreadCallback) => parallelSection { _ => foreachRecord =>
-        foreachRecord { record =>
-          critical {
-            printFields(record.fields)
-          }
+      (_: ThreadCallback) =>
+        parallelSection { _ =>
+          foreachRecord =>
+            foreachRecord { record =>
+              critical {
+                printFields(record.fields)
+              }
+            }
         }
-      }
   }
 
   def fieldsHash(fields: Fields) = {
     val hash = (fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }).toInt
-    if (hash >= 0) hash else 0-hash
+    if (hash >= 0) hash else 0 - hash
   }
 
   def fieldsEqual(a: Fields, b: Fields) = {
@@ -1106,7 +1124,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     val hashTableSize = hash_table_size
     val bucketSize = bucket_size
     val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize)
-    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize)
+    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize * bucketSize)
     val bucketStatus = NewArray[Int](hashTableSize)
     for (i <- 0 until hashTableSize: Rep[Range]) {
       bucketStatus(i) = 0
@@ -1213,10 +1231,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   class LB2ParHashMultiMap(numberOfThreads: Rep[Int], keySchema: Schema, valueSchema: Schema) {
     val hashTableSize = hash_table_size / numberOfThreads // partitioned hash table for each thread
     val bucketSize = bucket_size
-    val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize*numberOfThreads)
-    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize*bucketSize*numberOfThreads)
-    val bucketStatus = NewArray[Int](hashTableSize*numberOfThreads)
-    for (i <- 0 until hashTableSize*numberOfThreads: Rep[Range]) {
+    val keysBuffer = new ColumnarRecordBuffer(keySchema, hashTableSize * numberOfThreads)
+    val valuesBuffer = new ColumnarRecordBuffer(valueSchema, hashTableSize * bucketSize * numberOfThreads)
+    val bucketStatus = NewArray[Int](hashTableSize * numberOfThreads)
+    for (i <- 0 until hashTableSize * numberOfThreads: Rep[Range]) {
       bucketStatus(i) = 0
     }
 
@@ -1319,8 +1337,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def sort: Rep[Unit] = {
       for (i <- 1 until len: Rep[Range]) {
         var j = i: Rep[Int]
-        while (j > 0 && compare(Record(buffer(sortMap(j)), schema), Record(buffer(sortMap(j-1)), schema))) {
-          swap(j, j-1)
+        while (j > 0 && compare(Record(buffer(sortMap(j)), schema), Record(buffer(sortMap(j - 1)), schema))) {
+          swap(j, j - 1)
           j -= 1
         }
       }
@@ -1337,11 +1355,15 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         val right = stackRight(stackCounter)
         var i = left
         var j = right
-        val pivot = sortMap(median(i, j, i+(j-i)/2))
+        val pivot = sortMap(median(i, j, i + (j - i) / 2))
 
         while (i <= j) {
-          while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
-          while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+          while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) {
+            i = i + 1
+          }
+          while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) {
+            j = j - 1
+          }
           if (i <= j) {
             swap(i, j)
             i = i + 1
@@ -1379,11 +1401,15 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
               // If this partition is small, process it with this thread
               var i = left
               var j = right
-              val pivot = sortMap(median(i, j, i+(j-i)/2))
+              val pivot = sortMap(median(i, j, i + (j - i) / 2))
 
               while (i <= j) {
-                while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
-                while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+                while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) {
+                  i = i + 1
+                }
+                while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) {
+                  j = j - 1
+                }
                 if (i <= j) {
                   swap(i, j)
                   i = i + 1
@@ -1409,8 +1435,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
                   val pivot = sortMap(median(i, j, i + (j - i) / 2))
 
                   while (i <= j) {
-                    while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) { i = i + 1 }
-                    while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) { j = j - 1 }
+                    while (compare(Record(buffer(sortMap(i)), schema), Record(buffer(pivot), schema))) {
+                      i = i + 1
+                    }
+                    while (compare(Record(buffer(pivot), schema), Record(buffer(sortMap(j)), schema))) {
+                      j = j - 1
+                    }
                     if (i <= j) {
                       swap(i, j)
                       i = i + 1
