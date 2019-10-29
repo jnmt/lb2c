@@ -555,6 +555,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case ProjectOp(child, attributes) =>
       attributes.foldLeft(Vector.empty[Attribute]) { (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
+    case FilterVOp(child, _) => getSchema(child)
     case NestedLoopJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case HashJoinOp(left, right, _, _) => getSchema(left) ++ getSchema(right)
     case AggregateOp(child, keys, functions) => getAggregateKeysSchema(child, keys) ++ getAggregateFunctionsSchema(child, functions)
@@ -567,6 +568,20 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Lte(attr, value) => record(attr.name) isLte evalTerm(value, record)
     case Gt(attr, value) => record(attr.name) isGt evalTerm(value, record)
     case Lt(attr, value) => record(attr.name) isLt evalTerm(value, record)
+  }
+
+  def evalPredicateVec(predicate: Predicate, buffer: SIMDBuffer): Rep[__mmask16] = {
+    predicate match {
+      case Eq(attr, value) =>
+        buffer(attr) match {
+          case IntColumnarBuffer(array: Rep[Array[Int]]) =>
+            val a = _mm512_loadu_si512(array)
+            val b = value match {
+              case Value(x: Int) => _mm512_set1_epi32(x)
+            }
+            _mm512_cmpeq_epi32_mask(a, b)
+        }
+    }
   }
 
   def evalTerm(term: Term, record: Record): Field = term match {
@@ -797,6 +812,34 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
         foreachRecord { record => execFilterInternal(record, predicates, callback) }
+      }
+
+    case FilterVOp(child, predicates) =>
+      val schema = getSchema(child)
+      val buffer = new SIMDBuffer(schema, 16)
+      val indexVector = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+      val indexArray = NewArray[Int](16)
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          buffer.add(record)
+          if (buffer.len == 16) {
+            // SIMD operation
+            val bitmask = evalPredicateVec(predicates(0), buffer)
+            val count = _mm_popcnt_u32(bitmask)
+            _mm512_mask_compressstoreu_epi32(indexArray, bitmask, indexVector)
+            for (i <- 0 until count) {
+              callback(Record(buffer(indexArray(i)), schema))
+            }
+            buffer.cleanup()
+          }
+        }
+        // Scalar operation for rest of records
+        for (i <- 0 until buffer.len) {
+          val record = Record(buffer(i: Rep[Int]), schema)
+          val flag = evalPredicate(predicates(0), record)
+          if (flag) callback(record)
+        }
       }
 
     case NestedLoopJoinOp(left, right, leftAttr, rightAttr) =>
@@ -1489,6 +1532,30 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
+  class SIMDBuffer(schema: Schema, size: Int) {
+    val buffer = new ColumnarRecordBuffer(schema, size)
+    var len = var_new(0)
+
+    def cleanup(): Rep[Unit] = {
+      len = 0
+    }
+
+    def add(record: Record) = {
+      buffer(len) = record.fields
+      len += 1
+    }
+
+    def foreach(f: Record => Rep[Unit]) = {
+      for (i <- 0 until len) {
+        f(Record(buffer(i), schema))
+      }
+    }
+
+    def apply(index: Rep[Int]) = buffer(index)
+
+    def apply(attr: Attribute) = buffer(attr)
+  }
+
   abstract class ColumnarBuffer
   case class IntColumnarBuffer(data: Rep[Array[Int]]) extends ColumnarBuffer
   case class DoubleColumnarBuffer(data: Rep[Array[Double]]) extends ColumnarBuffer
@@ -1535,6 +1602,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case DateColumnarBuffer(yearArray, monthArray, dayArray) => DateField(yearArray(index), monthArray(index), dayArray(index))
       case AverageColumnarBuffer(sumArray, countArray) => AverageField(sumArray(index), countArray(index))
     }
+
+    def apply(attr: Attribute) = columns(schema.indexWhere(_.name == attr.name))
   }
 
 }

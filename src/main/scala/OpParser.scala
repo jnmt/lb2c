@@ -16,6 +16,8 @@ trait OpParser {
   case class AggregateOp(childOp: Operator, keys: Seq[String], functions: Seq[AggregateFunction]) extends Operator
   case class SortOp(childOp: Operator, attributes: Seq[String]) extends Operator
   case class CalculateOp(childOp: Operator, expressions: Seq[RootArithmeticOp]) extends Operator
+  // SIMD
+  case class FilterVOp(childOp: Operator, predicate: Seq[Predicate]) extends Operator
 
   abstract class ArithmeticOperator
   case class RootArithmeticOp(child: ArithmeticOperator, alias: String) extends ArithmeticOperator
@@ -92,8 +94,14 @@ trait OpParser {
       case table ~ _ ~ attrList => ScanOp(table, attrList.toVector, '|')
     }
 
-    def filterOperator: Parser[Operator] = "Filter" ~> "(" ~> operatorExceptForProject ~ "," ~ predicates <~ ")" ^^ {
+    def filterOperator: Parser[Operator] = filterScalarOperator | filterVectorOperator
+
+    def filterScalarOperator: Parser[Operator] = "Filter" ~> "(" ~> operatorExceptForProject ~ "," ~ predicates <~ ")" ^^ {
       case relation ~ _ ~ predicates => FilterOp(relation, predicates)
+    }
+
+    def filterVectorOperator: Parser[Operator] = "FilterV" ~> "(" ~> operatorExceptForProject ~ "," ~ predicates <~ ")" ^^ {
+      case relation ~ _ ~ predicates => FilterVOp(relation, predicates)
     }
 
     def joinOperator: Parser[Operator] = nestedLoopJoinOperator | hashJoinOperator

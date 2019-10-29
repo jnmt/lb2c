@@ -40,7 +40,10 @@ trait CGenUtilOps extends CGenBase {
 }
 
 
-trait Dsl extends PrimitiveOps with NumericOps with BooleanOps with LiftString with LiftPrimitives with LiftNumeric with LiftBoolean with IfThenElse with Equal with RangeOps with OrderingOps with MiscOps with ArrayOps with StringOps with SeqOps with Functions with While with StaticData with Variables with LiftVariables with ObjectOps with UtilOps {
+trait Dsl extends PrimitiveOps with NumericOps with BooleanOps
+  with LiftString with LiftPrimitives with LiftNumeric with LiftBoolean with IfThenElse with Equal with RangeOps
+  with OrderingOps with MiscOps with ArrayOps with StringOps with SeqOps with Functions with While
+  with StaticData with Variables with LiftVariables with ObjectOps with UtilOps with SIMDVectorOps {
   implicit def repStrToSeqOps(a: Rep[String]) = new SeqOpsCls(a.asInstanceOf[Rep[Seq[Char]]])
   override def infix_&&(lhs: Rep[Boolean], rhs: => Rep[Boolean])(implicit pos: scala.reflect.SourceContext): Rep[Boolean] =
     __ifThenElse(lhs, rhs, unit(false))
@@ -55,7 +58,11 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps with LiftString w
   def barrier(b: => Rep[Unit]): Rep[Unit]
 }
 
-trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp {
+trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp
+  with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp
+  with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp
+  with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp with SIMDVectorExp {
+
   override def boolean_or(lhs: Exp[Boolean], rhs: Exp[Boolean])(implicit pos: SourceContext) : Exp[Boolean] = lhs match {
     case Const(false) => rhs
     case _ => super.boolean_or(lhs, rhs)
@@ -199,6 +206,7 @@ trait DslGenC extends CGenNumericOps
     with CGenSeqOps with CGenFunctions with CGenWhile
     with CGenStaticData with CGenVariables
     with CGenObjectOps
+    with CGenSIMDOps
     with CGenUtilOps {
   val IR: DslExp
   import IR._
@@ -305,6 +313,7 @@ trait DslGenC extends CGenNumericOps
       #include <fcntl.h>
       #include <errno.h>
       #include <err.h>
+      #include <immintrin.h>
       #include <omp.h>
       #include <sys/mman.h>
       #include <sys/stat.h>
@@ -396,6 +405,16 @@ abstract class DslDriverC[A:Manifest,B:Manifest] extends DslSnippet[A,B] with Ds
     import scala.sys.process._
     (s"cc -std=c99 -O3 -Xpreprocessor -fopenmp -lomp /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
     (s"/tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+  }
+  def evalSIMD: Unit = { // TODO: jnmt: Clean up
+    val out = new java.io.PrintWriter("/tmp/snippet.c")
+    out.println(code)
+    out.close
+    //TODO: use precompile
+    (new java.io.File("/tmp/snippet")).delete
+    import scala.sys.process._
+    (s"cc -std=c99 -O3 -Xpreprocessor -fopenmp -lomp -mavx512f /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+    (s"sde -skx -- /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _) // Run snippet using emulator
   }
   /*
   def eval(a:A): Unit = { // TBD: should read result of type B?
