@@ -563,28 +563,39 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   def evalPredicate(predicate: Predicate, record: Record): Rep[Boolean] = predicate match {
-    case Eq(attr, value) => record(attr.name) isEquals evalTerm(value, record)
-    case Gte(attr, value) => record(attr.name) isGte evalTerm(value, record)
-    case Lte(attr, value) => record(attr.name) isLte evalTerm(value, record)
-    case Gt(attr, value) => record(attr.name) isGt evalTerm(value, record)
-    case Lt(attr, value) => record(attr.name) isLt evalTerm(value, record)
+    case Eq(attr, value) => record(attr.name) isEquals evalTerm(value)
+    case Gte(attr, value) => record(attr.name) isGte evalTerm(value)
+    case Lte(attr, value) => record(attr.name) isLte evalTerm(value)
+    case Gt(attr, value) => record(attr.name) isGt evalTerm(value)
+    case Lt(attr, value) => record(attr.name) isLt evalTerm(value)
   }
 
-  def evalPredicateVec(predicate: Predicate, buffer: SIMDBuffer): Rep[__mmask16] = {
+  def evalPredicateVec(predicate: Predicate, buffer: SimpleSIMDBuffer): Mask16u = {
     predicate match {
-      case Eq(attr, value) =>
-        buffer(attr) match {
-          case IntColumnarBuffer(array: Rep[Array[Int]]) =>
-            val a = _mm512_loadu_si512(array)
-            val b = value match {
-              case Value(x: Int) => _mm512_set1_epi32(x)
-            }
-            _mm512_cmpeq_epi32_mask(a, b)
-        }
+      case Eq(attr, value) => buffer(attr) match {
+        case attr: IntSIMDBuffer => attr isEq evalTerm(value)
+        case attr: DateSIMDBuffer => attr isEq evalTerm(value)
+      }
+      case Gte(attr, value) => buffer(attr) match {
+        case attr: IntSIMDBuffer => attr isGe evalTerm(value)
+        case attr: DateSIMDBuffer => attr isGe evalTerm(value)
+      }
+      case Gt(attr, value) => buffer(attr) match {
+        case attr: IntSIMDBuffer => attr isGt evalTerm(value)
+        case attr: DateSIMDBuffer => attr isGt evalTerm(value)
+      }
+      case Lte(attr, value) => buffer(attr) match {
+        case attr: IntSIMDBuffer => attr isLe evalTerm(value)
+        case attr: DateSIMDBuffer => attr isLe evalTerm(value)
+      }
+      case Lt(attr, value) => buffer(attr) match {
+        case attr: IntSIMDBuffer => attr isLt evalTerm(value)
+        case attr: DateSIMDBuffer => attr isLt evalTerm(value)
+      }
     }
   }
 
-  def evalTerm(term: Term, record: Record): Field = term match {
+  def evalTerm(term: Term): Field = term match {
     case Value(x: Int) => IntField(x)
     case Value(x: Double) => DoubleField(x)
     case Value(x: String) => StringField(x, x.toString.length)
@@ -816,8 +827,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     case FilterVOp(child, predicates) =>
       val schema = getSchema(child)
-      val buffer = new SIMDBuffer(schema, 16)
-      val indexVector = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+      val buffer = new SimpleSIMDBuffer(schema, 16)
+      val indexVector = Vec16u(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
       val indexArray = NewArray[Int](16)
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
@@ -825,10 +836,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           buffer.add(record)
           if (buffer.len == 16) {
             // SIMD operation
-            val bitmask = evalPredicateVec(predicates(0), buffer)
-            val count = _mm_popcnt_u32(bitmask)
-            _mm512_mask_compressstoreu_epi32(indexArray, bitmask, indexVector)
-            for (i <- 0 until count) {
+            val mask = evalPredicateVec(predicates(0), buffer)
+            indexVector.toBufferPacked(indexArray, mask)
+            for (i <- 0 until mask.popcount) {
               callback(Record(buffer(indexArray(i)), schema))
             }
             buffer.cleanup()
@@ -1532,8 +1542,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
   }
 
-  class SIMDBuffer(schema: Schema, size: Int) {
-    val buffer = new ColumnarRecordBuffer(schema, size)
+  class SimpleSIMDBuffer(schema: Schema, size: Int) {
+    val buffer = new SIMDRecordBuffer(schema, size)
     var len = var_new(0)
 
     def cleanup(): Rep[Unit] = {
@@ -1552,7 +1562,6 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def apply(index: Rep[Int]) = buffer(index)
-
     def apply(attr: Attribute) = buffer(attr)
   }
 
@@ -1602,8 +1611,116 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case DateColumnarBuffer(yearArray, monthArray, dayArray) => DateField(yearArray(index), monthArray(index), dayArray(index))
       case AverageColumnarBuffer(sumArray, countArray) => AverageField(sumArray(index), countArray(index))
     }
+  }
+
+  abstract class SIMDBuffer
+
+  case class IntSIMDBuffer(data: Rep[Array[Int]]) extends SIMDBuffer {
+    def isEq(field: Field): Mask16u = {
+      field match {
+        case IntField(x) => Vec16uFromArray(data) isEq Vec16u(x)
+      }
+    }
+    def isGe(field: Field): Mask16u = {
+      field match {
+        case IntField(x) => Vec16uFromArray(data) isGe Vec16u(x)
+      }
+    }
+    def isGt(field: Field): Mask16u = {
+      field match {
+        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+      }
+    }
+    def isLe(field: Field): Mask16u = {
+      field match {
+        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+      }
+    }
+    def isLt(field: Field): Mask16u = {
+      field match {
+        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+      }
+    }
+  }
+
+  case class DoubleSIMDBuffer(data: Rep[Array[Double]]) extends SIMDBuffer
+
+  case class StringSIMDBuffer(data: Rep[Array[String]], len: Rep[Array[Int]]) extends SIMDBuffer
+
+  case class DateSIMDBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) extends SIMDBuffer {
+    def isEq(field: Field): Mask16u = {
+      field match {
+        case DateField(y, m, d) =>
+          val ymask = Vec16uFromArray(year) isEq Vec16u(y)
+          val mmask = Vec16uFromArray(month) isEq Vec16u(m)
+          val dmask = Vec16uFromArray(day) isEq Vec16u(d)
+          ymask and mmask and dmask
+      }
+    }
+    def isGe(field: Field): Mask16u = {
+      field match {
+        case DateField(y, m, d) => convertFromBuffer(year, month, day) isGe convert(y, m, d)
+      }
+    }
+    def isGt(field: Field): Mask16u = {
+      field match {
+        case DateField(y, m, d) => convertFromBuffer(year, month, day) isGt convert(y, m, d)
+      }
+    }
+    def isLe(field: Field): Mask16u = {
+      field match {
+        case DateField(y, m, d) => convertFromBuffer(year, month, day) isLe convert(y, m, d)
+      }
+    }
+    def isLt(field: Field): Mask16u = {
+      field match {
+        case DateField(y, m, d) => convertFromBuffer(year, month, day) isLt convert(y, m, d)
+      }
+    }
+    def convert(year: Rep[Int], month: Rep[Int], day: Rep[Int]) = {
+      ((Vec16u(year) mullo Vec16u(10000)) add (Vec16u(month) mullo Vec16u(100))) add Vec16u(day)
+    }
+    def convertFromBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) = {
+      ((Vec16uFromArray(year) mullo Vec16u(10000)) add (Vec16uFromArray(month) mullo Vec16u(100))) add Vec16uFromArray(day)
+    }
+  }
+
+  case class AverageSIMDBuffer(data: Rep[Array[Double]], count: Rep[Array[Int]]) extends SIMDBuffer
+
+  class SIMDRecordBuffer(schema: Schema, size: Rep[Int]) {
+    val columns = schema.map {
+      case IntAttribute(_) => IntSIMDBuffer(NewArray[Int](size))
+      case DoubleAttribute(_) => DoubleSIMDBuffer(NewArray[Double](size))
+      case StringAttribute(_) => StringSIMDBuffer(NewArray[String](size), NewArray[Int](size))
+      case DateAttribute(_) => DateSIMDBuffer(NewArray[Int](size), NewArray[Int](size), NewArray[Int](size))
+      case AverageAttribute(_) => AverageSIMDBuffer(NewArray[Double](size), NewArray[Int](size))
+    }
+
+    def update(index: Rep[Int], fields: Fields) = (columns, fields).zipped.foreach {
+      // For each pair of buffer and value, call update method of raw array buffer.
+      // Note that the value is wrapped by type Field such as IntField(3)
+      case (IntSIMDBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
+      case (DoubleSIMDBuffer(arrayBuffer), DoubleField(value)) => arrayBuffer(index) = value
+      case (StringSIMDBuffer(stringArray, lengthArray), StringField(value, length)) =>
+        stringArray(index) = value
+        lengthArray(index) = length
+      case (DateSIMDBuffer(yearArray, monthArray, dayArray), DateField(year, month, day)) =>
+        yearArray(index) = year
+        monthArray(index) = month
+        dayArray(index) = day
+      case (AverageSIMDBuffer(sumArray, countArray), AverageField(sum, count)) =>
+        sumArray(index) = sum
+        countArray(index) = count
+    }
+
+    def apply(index: Rep[Int]) = columns.map {
+      case IntSIMDBuffer(arrayBuffer) => IntField(arrayBuffer(index))
+      case DoubleSIMDBuffer(arrayBuffer) => DoubleField(arrayBuffer(index))
+      case StringSIMDBuffer(stringArray, lengthArray) => StringField(stringArray(index), lengthArray(index))
+      case DateSIMDBuffer(yearArray, monthArray, dayArray) => DateField(yearArray(index), monthArray(index), dayArray(index))
+      case AverageSIMDBuffer(sumArray, countArray) => AverageField(sumArray(index), countArray(index))
+    }
 
     def apply(attr: Attribute) = columns(schema.indexWhere(_.name == attr.name))
   }
-
 }
