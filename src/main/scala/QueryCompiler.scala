@@ -570,26 +570,31 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Lt(attr, value) => record(attr.name) isLt evalTerm(value)
   }
 
-  def evalPredicateVec(predicate: Predicate, buffer: SimpleSIMDBuffer): Mask16u = {
+  def evalPredicateVec(predicate: Predicate, buffer: SimpleSIMDBuffer): Mask16 = {
     predicate match {
       case Eq(attr, value) => buffer(attr) match {
         case attr: IntSIMDBuffer => attr isEq evalTerm(value)
+        case attr: DoubleSIMDBuffer => attr isEq evalTerm(value)
         case attr: DateSIMDBuffer => attr isEq evalTerm(value)
       }
       case Gte(attr, value) => buffer(attr) match {
         case attr: IntSIMDBuffer => attr isGe evalTerm(value)
+        case attr: DoubleSIMDBuffer => attr isGe evalTerm(value)
         case attr: DateSIMDBuffer => attr isGe evalTerm(value)
       }
       case Gt(attr, value) => buffer(attr) match {
         case attr: IntSIMDBuffer => attr isGt evalTerm(value)
+        case attr: DoubleSIMDBuffer => attr isGt evalTerm(value)
         case attr: DateSIMDBuffer => attr isGt evalTerm(value)
       }
       case Lte(attr, value) => buffer(attr) match {
         case attr: IntSIMDBuffer => attr isLe evalTerm(value)
+        case attr: DoubleSIMDBuffer => attr isLe evalTerm(value)
         case attr: DateSIMDBuffer => attr isLe evalTerm(value)
       }
       case Lt(attr, value) => buffer(attr) match {
         case attr: IntSIMDBuffer => attr isLt evalTerm(value)
+        case attr: DoubleSIMDBuffer => attr isLt evalTerm(value)
         case attr: DateSIMDBuffer => attr isLt evalTerm(value)
       }
     }
@@ -828,7 +833,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case FilterVOp(child, predicates) =>
       val schema = getSchema(child)
       val buffer = new SimpleSIMDBuffer(schema, 16)
-      val indexVector = Vec16u(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+      val indexVector = Vec16i(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
       val indexArray = NewArray[Int](16)
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
@@ -836,7 +841,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           buffer.add(record)
           if (buffer.len == 16) {
             // SIMD operation
-            val mask = evalPredicateVec(predicates(0), buffer)
+            var mask: Mask16 = Mask16FromInt(0xffff)
+            predicates.foreach { predicate =>
+              mask = mask and evalPredicateVec(predicate, buffer)
+            }
             indexVector.toBufferPacked(indexArray, mask)
             for (i <- 0 until mask.popcount) {
               callback(Record(buffer(indexArray(i)), schema))
@@ -846,8 +854,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         }
         // Scalar operation for rest of records
         for (i <- 0 until buffer.len) {
+          var flag: Rep[Boolean] = true
           val record = Record(buffer(i: Rep[Int]), schema)
-          val flag = evalPredicate(predicates(0), record)
+          predicates.foreach { predicate =>
+            flag = flag && evalPredicate(predicate, record)
+          }
           if (flag) callback(record)
         }
       }
@@ -1616,72 +1627,98 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   abstract class SIMDBuffer
 
   case class IntSIMDBuffer(data: Rep[Array[Int]]) extends SIMDBuffer {
-    def isEq(field: Field): Mask16u = {
+    def isEq(field: Field): Mask16 = {
       field match {
-        case IntField(x) => Vec16uFromArray(data) isEq Vec16u(x)
+        case IntField(x) => Vec16iFromArray(data) isEq Vec16i(x)
       }
     }
-    def isGe(field: Field): Mask16u = {
+    def isGe(field: Field): Mask16 = {
       field match {
-        case IntField(x) => Vec16uFromArray(data) isGe Vec16u(x)
+        case IntField(x) => Vec16iFromArray(data) isGe Vec16i(x)
       }
     }
-    def isGt(field: Field): Mask16u = {
+    def isGt(field: Field): Mask16 = {
       field match {
-        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+        case IntField(x) => Vec16iFromArray(data) isGt Vec16i(x)
       }
     }
-    def isLe(field: Field): Mask16u = {
+    def isLe(field: Field): Mask16 = {
       field match {
-        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+        case IntField(x) => Vec16iFromArray(data) isGt Vec16i(x)
       }
     }
-    def isLt(field: Field): Mask16u = {
+    def isLt(field: Field): Mask16 = {
       field match {
-        case IntField(x) => Vec16uFromArray(data) isGt Vec16u(x)
+        case IntField(x) => Vec16iFromArray(data) isGt Vec16i(x)
       }
     }
   }
 
-  case class DoubleSIMDBuffer(data: Rep[Array[Double]]) extends SIMDBuffer
+  case class DoubleSIMDBuffer(data: Rep[Array[Double]]) extends SIMDBuffer {
+    def isEq(field: Field): Mask16 = {
+      field match {
+        case DoubleField(x) => Mask16(Vec8dFromArray(data) isEq Vec8d(x), Vec8dFromArray(data, 8) isEq Vec8d(x))
+      }
+    }
+    def isGe(field: Field): Mask16 = {
+      field match {
+        case DoubleField(x) => Mask16(Vec8dFromArray(data) isGe Vec8d(x), Vec8dFromArray(data, 8) isGe Vec8d(x))
+      }
+    }
+    def isGt(field: Field): Mask16 = {
+      field match {
+        case DoubleField(x) => Mask16(Vec8dFromArray(data) isGt Vec8d(x), Vec8dFromArray(data, 8) isGt Vec8d(x))
+      }
+    }
+    def isLe(field: Field): Mask16 = {
+      field match {
+        case DoubleField(x) => Mask16(Vec8dFromArray(data) isLe Vec8d(x), Vec8dFromArray(data, 8) isLe Vec8d(x))
+      }
+    }
+    def isLt(field: Field): Mask16 = {
+      field match {
+        case DoubleField(x) => Mask16(Vec8dFromArray(data) isLt Vec8d(x), Vec8dFromArray(data, 8) isLt Vec8d(x))
+      }
+    }
+  }
 
   case class StringSIMDBuffer(data: Rep[Array[String]], len: Rep[Array[Int]]) extends SIMDBuffer
 
   case class DateSIMDBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) extends SIMDBuffer {
-    def isEq(field: Field): Mask16u = {
+    def isEq(field: Field): Mask16 = {
       field match {
         case DateField(y, m, d) =>
-          val ymask = Vec16uFromArray(year) isEq Vec16u(y)
-          val mmask = Vec16uFromArray(month) isEq Vec16u(m)
-          val dmask = Vec16uFromArray(day) isEq Vec16u(d)
+          val ymask = Vec16iFromArray(year) isEq Vec16i(y)
+          val mmask = Vec16iFromArray(month) isEq Vec16i(m)
+          val dmask = Vec16iFromArray(day) isEq Vec16i(d)
           ymask and mmask and dmask
       }
     }
-    def isGe(field: Field): Mask16u = {
+    def isGe(field: Field): Mask16 = {
       field match {
         case DateField(y, m, d) => convertFromBuffer(year, month, day) isGe convert(y, m, d)
       }
     }
-    def isGt(field: Field): Mask16u = {
+    def isGt(field: Field): Mask16 = {
       field match {
         case DateField(y, m, d) => convertFromBuffer(year, month, day) isGt convert(y, m, d)
       }
     }
-    def isLe(field: Field): Mask16u = {
+    def isLe(field: Field): Mask16 = {
       field match {
         case DateField(y, m, d) => convertFromBuffer(year, month, day) isLe convert(y, m, d)
       }
     }
-    def isLt(field: Field): Mask16u = {
+    def isLt(field: Field): Mask16 = {
       field match {
         case DateField(y, m, d) => convertFromBuffer(year, month, day) isLt convert(y, m, d)
       }
     }
     def convert(year: Rep[Int], month: Rep[Int], day: Rep[Int]) = {
-      ((Vec16u(year) mullo Vec16u(10000)) add (Vec16u(month) mullo Vec16u(100))) add Vec16u(day)
+      ((Vec16i(year) mullo Vec16i(10000)) add (Vec16i(month) mullo Vec16i(100))) add Vec16i(day)
     }
     def convertFromBuffer(year: Rep[Array[Int]], month: Rep[Array[Int]], day: Rep[Array[Int]]) = {
-      ((Vec16uFromArray(year) mullo Vec16u(10000)) add (Vec16uFromArray(month) mullo Vec16u(100))) add Vec16uFromArray(day)
+      ((Vec16iFromArray(year) mullo Vec16i(10000)) add (Vec16iFromArray(month) mullo Vec16i(100))) add Vec16iFromArray(day)
     }
   }
 
