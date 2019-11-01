@@ -566,6 +566,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   def getSchema(o: Operator): Schema = o match {
     case ScanOp(_, schema, _) => schema
     case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
+    case CaseWhenOp(child, _, _, _, alias) => getSchema(child) ++ Vector(DoubleAttribute(alias)) // TODO: Use appropriate types; maybe implicit type decision is required based on type of inputs
     case ProjectOp(child, attributes) =>
       attributes.foldLeft(Vector.empty[Attribute]) { (result, attr) => result ++ getSchema(child).find(_.name == attr) }
     case FilterOp(child, _) => getSchema(child)
@@ -576,50 +577,80 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case SortOp(child, _) => getSchema(child)
   }
 
+  def Attribute(name: String, x: Field): Attribute = x match {
+    case IntField(_) => IntAttribute(name)
+    case DoubleField(_) => DoubleAttribute(name)
+    case DateField(_, _, _) => DateAttribute(name)
+    case AverageField(_, _) => AverageAttribute(name)
+    case StringField(_, _) => StringAttribute(name)
+  }
+
   def evalPredicate(predicate: Predicate, record: Record): Rep[Boolean] = predicate match {
-    case Eq(attr, value) => record(attr.name) isEquals evalTerm(value)
-    case Gte(attr, value) => record(attr.name) isGte evalTerm(value)
-    case Lte(attr, value) => record(attr.name) isLte evalTerm(value)
-    case Gt(attr, value) => record(attr.name) isGt evalTerm(value)
-    case Lt(attr, value) => record(attr.name) isLt evalTerm(value)
-    case Like(attr, value) => record(attr.name) like evalTerm(value)
+    case Eq(attr, value) => record(attr.name) isEquals evalValue(value)
+    case Gte(attr, value) => record(attr.name) isGte evalValue(value)
+    case Lte(attr, value) => record(attr.name) isLte evalValue(value)
+    case Gt(attr, value) => record(attr.name) isGt evalValue(value)
+    case Lt(attr, value) => record(attr.name) isLt evalValue(value)
+    case Like(attr, value) => record(attr.name) like evalValue(value)
+  }
+
+  def evalPredicates(predicates: Seq[Predicate], record: Record): Rep[Boolean] = {
+    //  We cannot do like below because LMS seems not to support forall method.
+    //  ```
+    //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
+    //  ```
+    // So, use foreach with Rep[Boolean] flag.
+    var flag: Rep[Boolean] = true
+    predicates.foreach { predicate =>
+      flag = flag && evalPredicate(predicate, record)
+    }
+    flag
   }
 
   def evalPredicateVec(predicate: Predicate, buffer: SimpleSIMDBuffer): Mask16 = {
     predicate match {
       case Eq(attr, value) => buffer(attr) match {
-        case attr: IntSIMDBuffer => attr isEq evalTerm(value)
-        case attr: DoubleSIMDBuffer => attr isEq evalTerm(value)
-        case attr: DateSIMDBuffer => attr isEq evalTerm(value)
+        case attr: IntSIMDBuffer => attr isEq evalValue(value)
+        case attr: DoubleSIMDBuffer => attr isEq evalValue(value)
+        case attr: DateSIMDBuffer => attr isEq evalValue(value)
       }
       case Gte(attr, value) => buffer(attr) match {
-        case attr: IntSIMDBuffer => attr isGe evalTerm(value)
-        case attr: DoubleSIMDBuffer => attr isGe evalTerm(value)
-        case attr: DateSIMDBuffer => attr isGe evalTerm(value)
+        case attr: IntSIMDBuffer => attr isGe evalValue(value)
+        case attr: DoubleSIMDBuffer => attr isGe evalValue(value)
+        case attr: DateSIMDBuffer => attr isGe evalValue(value)
       }
       case Gt(attr, value) => buffer(attr) match {
-        case attr: IntSIMDBuffer => attr isGt evalTerm(value)
-        case attr: DoubleSIMDBuffer => attr isGt evalTerm(value)
-        case attr: DateSIMDBuffer => attr isGt evalTerm(value)
+        case attr: IntSIMDBuffer => attr isGt evalValue(value)
+        case attr: DoubleSIMDBuffer => attr isGt evalValue(value)
+        case attr: DateSIMDBuffer => attr isGt evalValue(value)
       }
       case Lte(attr, value) => buffer(attr) match {
-        case attr: IntSIMDBuffer => attr isLe evalTerm(value)
-        case attr: DoubleSIMDBuffer => attr isLe evalTerm(value)
-        case attr: DateSIMDBuffer => attr isLe evalTerm(value)
+        case attr: IntSIMDBuffer => attr isLe evalValue(value)
+        case attr: DoubleSIMDBuffer => attr isLe evalValue(value)
+        case attr: DateSIMDBuffer => attr isLe evalValue(value)
       }
       case Lt(attr, value) => buffer(attr) match {
-        case attr: IntSIMDBuffer => attr isLt evalTerm(value)
-        case attr: DoubleSIMDBuffer => attr isLt evalTerm(value)
-        case attr: DateSIMDBuffer => attr isLt evalTerm(value)
+        case attr: IntSIMDBuffer => attr isLt evalValue(value)
+        case attr: DoubleSIMDBuffer => attr isLt evalValue(value)
+        case attr: DateSIMDBuffer => attr isLt evalValue(value)
       }
     }
   }
 
-  def evalTerm(term: Term): Field = term match {
+  def evalValue(term: Term): Field = term match {
     case Value(x: Int) => IntField(x)
     case Value(x: Double) => DoubleField(x)
     case Value(x: String) => StringField(x, x.toString.length)
     case Value(x: Calendar) => DateField(x.get(Calendar.YEAR), x.get(Calendar.MONTH) + 1, x.get(Calendar.DAY_OF_MONTH))
+  }
+
+  def evalTerm(term: Term, record: Record): Field = term match {
+    case IntAttribute(name) => record(name)
+    case DoubleAttribute(name) => record(name)
+    case DateAttribute(name) => record(name)
+    case StringAttribute(name) => record(name)
+    case AnyAttribute(name) => record(name)
+    case Value(_) => evalValue(term)
   }
 
   def getInitFields(functions: Seq[AggregateFunction]): Fields = {
@@ -640,21 +671,24 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     callback(Record(record.fields ++ fields, record.schema ++ schema))
   }
 
+  def execCaseWhenInternal(record: Record, predicates: Seq[Predicate], a: Term, b: Term, alias: String, callback: RecordCallback): Rep[Unit] = {
+    // Making branch here is not intuitive but seems that this is necessary for LMS.
+    // Note that the generated code will be well-optimized and have no redundant part.
+    if (evalPredicates(predicates, record)) {
+      val field = evalTerm(a, record)
+      callback(Record(record.fields ++ Vector(field), record.schema ++ Vector(Attribute(alias, field))))
+    } else {
+      val field = evalTerm(b, record)
+      callback(Record(record.fields ++ Vector(field), record.schema ++ Vector(Attribute(alias, field))))
+    }
+  }
+
   def execProjectInternal(record: Record, attributeNames: Seq[String], o: Operator, callback: RecordCallback): Rep[Unit] = {
     callback(Record(record(attributeNames), getSchema(o)))
   }
 
   def execFilterInternal(record: Record, predicates: Seq[Predicate], callback: RecordCallback): Rep[Unit] = {
-    //  We cannot do like below because LMS seems not to support forall method.
-    //  ```
-    //  if ( predicates.forall { evalPredicate(_, record) } ) callback(record)
-    //  ```
-    // So, use foreach with Rep[Boolean] flag.
-    var flag: Rep[Boolean] = true
-    predicates.foreach { predicate =>
-      flag = flag && evalPredicate(predicate, record)
-    }
-    if (flag) callback(record)
+    if (evalPredicates(predicates, record)) callback(record)
   }
 
   def execAggregation(functions: Seq[AggregateFunction], currentFields: Fields, record: Record): Fields = {
@@ -693,6 +727,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             // FIXME: Much better way for handling data types?
             case (current: IntField, field: IntField) => IntField(current.value + field.value)
             case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
+            case (current: DoubleField, field: IntField) => DoubleField(current.value + field.value)
             case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
           }
         case Average(attribute: String) =>
@@ -738,6 +773,9 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     case CalculateOp(child, attributeExpList) =>
       execOp(child) { record => execCalculateInternal(record, attributeExpList, callback) }
+
+    case CaseWhenOp(child, predicates, a, b, alias) =>
+      execOp(child) { record => execCaseWhenInternal(record, predicates, a, b, alias, callback) }
 
     case ProjectOp(child, attributeNames) =>
       execOp(child) { record => execProjectInternal(record, attributeNames, o, callback) }
@@ -798,6 +836,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       foreachRecord { record =>
         parent match {
           case CalculateOp(_, attributeExpList) => execCalculateInternal(record, attributeExpList, callback)
+          case CaseWhenOp(_, predicates, a, b, alias) => execCaseWhenInternal(record, predicates, a, b, alias, callback)
           case ProjectOp(_, attributeNames) => execProjectInternal(record, attributeNames, parent, callback)
           case FilterOp(_, predicates) => execFilterInternal(record, predicates, callback)
         }
@@ -831,6 +870,12 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
         foreachRecord { record => execCalculateInternal(record, attributeExpList, callback) }
+      }
+
+    case CaseWhenOp(child, predicates, a, b, alias) =>
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record => execCaseWhenInternal(record, predicates, a, b, alias, callback) }
       }
 
     case ProjectOp(child, attributeNames) =>
@@ -989,6 +1034,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
             // FIXME: Much better way for handling data types?
             case (current: IntField, field: IntField) => IntField(current.value + field.value)
             case (current: IntField, field: DoubleField) => DoubleField(current.value + field.value)
+            case (current: DoubleField, field: IntField) => DoubleField(current.value + field.value)
             case (current: DoubleField, field: DoubleField) => DoubleField(current.value + field.value)
           }
         case Average(_) =>
@@ -1021,6 +1067,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
 
     case CalculateOp(child, _) => getParallelFunction(o, child)
+    case CaseWhenOp(child, _, _, _, _) => getParallelFunction(o, child)
     case ProjectOp(child, _) => getParallelFunction(o, child)
     case FilterOp(child, _) => getParallelFunction(o, child)
 
@@ -1617,6 +1664,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       // For each pair of buffer and value, call update method of raw array buffer.
       // Note that the value is wrapped by type Field such as IntField(3)
       case (IntColumnarBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
+      case (DoubleColumnarBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
       case (DoubleColumnarBuffer(arrayBuffer), DoubleField(value)) => arrayBuffer(index) = value
       case (StringColumnarBuffer(stringArray, lengthArray), StringField(value, length)) =>
         stringArray(index) = value
@@ -1752,6 +1800,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       // For each pair of buffer and value, call update method of raw array buffer.
       // Note that the value is wrapped by type Field such as IntField(3)
       case (IntSIMDBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
+      case (DoubleSIMDBuffer(arrayBuffer), IntField(value)) => arrayBuffer(index) = value
       case (DoubleSIMDBuffer(arrayBuffer), DoubleField(value)) => arrayBuffer(index) = value
       case (StringSIMDBuffer(stringArray, lengthArray), StringField(value, length)) =>
         stringArray(index) = value

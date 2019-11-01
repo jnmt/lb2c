@@ -16,6 +16,7 @@ trait OpParser {
   case class AggregateOp(childOp: Operator, keys: Seq[String], functions: Seq[AggregateFunction]) extends Operator
   case class SortOp(childOp: Operator, attributes: Seq[String]) extends Operator
   case class CalculateOp(childOp: Operator, expressions: Seq[RootArithmeticOp]) extends Operator
+  case class CaseWhenOp(childOp: Operator, predicates: Seq[Predicate], a: Term, b: Term, alias: String) extends Operator
   // SIMD
   case class FilterVOp(childOp: Operator, predicate: Seq[Predicate]) extends Operator
 
@@ -75,7 +76,7 @@ trait OpParser {
     }
 
     def operatorExceptForProject: Parser[Operator] =
-      scanOperator | filterOperator | joinOperator | aggregateOperator | sortOperator | calculateOperator ^^ {
+      scanOperator | filterOperator | joinOperator | aggregateOperator | sortOperator | calculateOperator | caseWhenOperator ^^ {
         case op => op
       }
 
@@ -89,6 +90,10 @@ trait OpParser {
 
     def calculateOperator: Parser[Operator] = "Calculate" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeExpList <~ ")" ^^ {
       case relation ~ "," ~ attrExpList => CalculateOp(relation, attrExpList.toVector)
+    }
+
+    def caseWhenOperator: Parser[Operator] = "CaseWhen" ~> "(" ~> operatorExceptForProject ~ "," ~ predicates ~ "then" ~ attributeOrValue ~ "else" ~ attributeOrValue ~ "as" ~ ident <~ ")" ^^ {
+      case relation ~ "," ~ predicates ~ "then" ~ a ~ "else" ~ b ~ "as" ~ alias => CaseWhenOp(relation, predicates, a, b, alias)
     }
 
     def scanOperator: Parser[Operator] = "Scan" ~> "(" ~> tableIdentifier ~ "," ~ attributeWithTypeList <~ ")" ^^ {
@@ -140,16 +145,18 @@ trait OpParser {
     def predicates: Parser[Seq[Predicate]] = repsep(predicate, "and")
 
     def predicate: Parser[Predicate] =
-      leftTerm ~ "=" ~ rightTerm ^^ { case a ~ _ ~ b => Eq(a, b) } |
-        leftTerm ~ ">=" ~ rightTerm ^^ { case a ~ _ ~ b => Gte(a, b) } |
-        leftTerm ~ "<=" ~ rightTerm ^^ { case a ~ _ ~ b => Lte(a, b) } |
-        leftTerm ~ ">" ~ rightTerm ^^ { case a ~ _ ~ b => Gt(a, b) } |
-        leftTerm ~ "<" ~ rightTerm ^^ { case a ~ _ ~ b => Lt(a, b) } |
-        leftTerm ~ "like" ~ rightTerm ^^ { case a ~ _ ~ b => Like(a, b) }
+      attribute ~ "=" ~ value ^^ { case a ~ _ ~ b => Eq(a, b) } |
+        attribute ~ ">=" ~ value ^^ { case a ~ _ ~ b => Gte(a, b) } |
+        attribute ~ "<=" ~ value ^^ { case a ~ _ ~ b => Lte(a, b) } |
+        attribute ~ ">" ~ value ^^ { case a ~ _ ~ b => Gt(a, b) } |
+        attribute ~ "<" ~ value ^^ { case a ~ _ ~ b => Lt(a, b) } |
+        attribute ~ "like" ~ value ^^ { case a ~ _ ~ b => Like(a, b) }
 
-    def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
+    def attributeOrValue: Parser[Term] = attribute | value
 
-    def rightTerm: Parser[Value] = doubleValue | intValue | dateValue | strippedStringLiteral ^^ { s => Value(s) }
+    def attribute: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
+
+    def value: Parser[Value] = doubleValue | intValue | dateValue | strippedStringLiteral ^^ { s => Value(s) }
 
     def intValue: Parser[Value] = """[0-9]+""".r ^^ { s => Value(s.toInt) }
 
@@ -219,7 +226,7 @@ trait OpParser {
 
     def attributeOp: Parser[ArithmeticOperator] = attributeIdentifier ^^ { x => AttributeOp(x) }
 
-    def valueOp: Parser[ArithmeticOperator] = rightTerm ^^ { x => ValueOp(x) } // TODO: The name 'rightTerm' is not appropriate
+    def valueOp: Parser[ArithmeticOperator] = value ^^ { x => ValueOp(x) }
 
     def parenthesizedOp: Parser[ArithmeticOperator] = "(" ~> attributeExpression <~ ")" ^^ { x => ParenthesizedOp(x) }
 
