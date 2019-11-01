@@ -13,6 +13,7 @@ trait CLibraryBase extends Base with UncheckedOps { this: Dsl =>
   def filelen(fd: Rep[Int]): Rep[Int]
   def mmap[T:Typ](fd: Rep[Int], len: Rep[Int]): Rep[Array[T]]
   def stringFromCharArray(buf: Rep[Array[Char]], pos: Rep[Int], len: Rep[Int]): Rep[String]
+  def pattern_compare(s: Rep[String], pattern: Rep[String]): Rep[Boolean]
   def prints(s: Rep[String]): Rep[Int]
   def infix_toInt(c: Rep[Char]): Rep[Int] = c.asInstanceOf[Rep[Int]]
   def hash_table_size: Rep[Int]
@@ -27,6 +28,7 @@ trait CLibraryExp extends CLibraryBase with UncheckedOpsExp { this: DslExp =>
   def filelen(fd: Rep[Int]) = uncheckedPure[Int]("fsize(",fd,")") // FIXME: fresh name
   def mmap[T:Typ](fd: Rep[Int], len: Rep[Int]) = uncheckedPure[Array[T]]("(char*)mmap(0, ",len,", PROT_READ, MAP_FILE | MAP_SHARED, ",fd,", 0)")
   def stringFromCharArray(data: Rep[Array[Char]], pos: Rep[Int], len: Rep[Int]): Rep[String] = uncheckedPure[String](data," + ",pos)
+  def pattern_compare(s: Rep[String], pattern: Rep[String]): Rep[Boolean] = uncheckedPure[Boolean]("pattern_compare(", s, ",", pattern, ")")
   def prints(s: Rep[String]): Rep[Int] = unchecked[Int]("printll(",s,")")
   def hash_table_size = uncheckedPure[Int]("HASH_TABLE_SIZE")
   def bucket_size = uncheckedPure[Int]("BUCKET_SIZE")

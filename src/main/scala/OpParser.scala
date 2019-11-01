@@ -53,6 +53,7 @@ trait OpParser {
   case class Lte(a: Attribute, b: Value) extends Predicate
   case class Gt(a: Attribute, b: Value) extends Predicate
   case class Lt(a: Attribute, b: Value) extends Predicate
+  case class Like(a: Attribute, b: Value) extends Predicate
 
   /*
   // some smart constructors
@@ -143,7 +144,8 @@ trait OpParser {
         leftTerm ~ ">=" ~ rightTerm ^^ { case a ~ _ ~ b => Gte(a, b) } |
         leftTerm ~ "<=" ~ rightTerm ^^ { case a ~ _ ~ b => Lte(a, b) } |
         leftTerm ~ ">" ~ rightTerm ^^ { case a ~ _ ~ b => Gt(a, b) } |
-        leftTerm ~ "<" ~ rightTerm ^^ { case a ~ _ ~ b => Lt(a, b) }
+        leftTerm ~ "<" ~ rightTerm ^^ { case a ~ _ ~ b => Lt(a, b) } |
+        leftTerm ~ "like" ~ rightTerm ^^ { case a ~ _ ~ b => Like(a, b) }
 
     def leftTerm: Parser[Attribute] = attributeIdentifier ^^ { x => AnyAttribute(x) }
 

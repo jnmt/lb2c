@@ -212,6 +212,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def isGt(o: Field): Rep[Boolean]
 
     def isLt(o: Field): Rep[Boolean]
+
+    def like(o: Field): Rep[Boolean]
   }
 
   case class IntField(value: Rep[Int]) extends Field {
@@ -261,6 +263,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def isLt(o: Field): Rep[Boolean] = o match {
       case IntField(v) => value < v
     }
+
+    def like(o: Field): Rep[Boolean] = true
   }
 
   case class DoubleField(value: Rep[Double]) extends Field {
@@ -315,6 +319,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       case IntField(v) => value < v
       case DoubleField(v) => value < v
     }
+
+    def like(o: Field): Rep[Boolean] = true
   }
 
   case class DateField(value: Rep[Int], month: Rep[Int], day: Rep[Int]) extends Field {
@@ -365,6 +371,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         val b = y * 10000 + m * 100 + d
         a < b
     }
+
+    def like(o: Field): Rep[Boolean] = true
   }
 
   case class AverageField(value: Rep[Double], count: Rep[Int]) extends Field {
@@ -394,6 +402,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     def isGt(o: Field): Rep[Boolean] = true
 
     def isLt(o: Field): Rep[Boolean] = true
+
+    def like(o: Field): Rep[Boolean] = true
   }
 
   case class StringField(value: Rep[String], length: Rep[Int]) extends Field {
@@ -439,6 +449,10 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
           i += 1
         }
         value.charAt(i) < operandValue.charAt(i) // TODO: Need to consider length? e.g., XXX is less than XXXX
+    }
+
+    def like(o: Field): Rep[Boolean] = o match {
+      case StringField(operandValue, operandLength) => pattern_compare(value, operandValue)
     }
   }
 
@@ -568,6 +582,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case Lte(attr, value) => record(attr.name) isLte evalTerm(value)
     case Gt(attr, value) => record(attr.name) isGt evalTerm(value)
     case Lt(attr, value) => record(attr.name) isLt evalTerm(value)
+    case Like(attr, value) => record(attr.name) like evalTerm(value)
   }
 
   def evalPredicateVec(predicate: Predicate, buffer: SimpleSIMDBuffer): Mask16 = {

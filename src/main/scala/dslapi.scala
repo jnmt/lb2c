@@ -317,12 +317,18 @@ trait DslGenC extends CGenNumericOps
       #include <omp.h>
       #include <sys/mman.h>
       #include <sys/stat.h>
+      #include <stdbool.h>
       #include <stdio.h>
       #include <stdint.h>
+      #include <string.h>
       #include <unistd.h>
       #ifndef MAP_FILE
       #define MAP_FILE MAP_SHARED
       #endif
+      #define MATCH 0
+      #define NOMATCH 1
+      #define NOWILDCARDMATCH 2
+      #define CharRead(A) (*(A++))
       #define HASH_TABLE_SIZE (1<<22)
       #define BUCKET_SIZE (1<<8)
       #define NUM_THREADS 4
@@ -336,6 +342,49 @@ trait DslGenC extends CGenNumericOps
           putchar(*s++);
         }
         return 0;
+      }
+      int __pattern_compare(char *s, char *pattern) {
+        char c;
+        char c2;
+        while ((c = CharRead(pattern)) != 0) {
+          if (c == '%') {
+            /* Skip over multiple "%" characters in the pattern. */
+            while ((c = CharRead(pattern)) == '%')
+              continue;
+            if (c == 0) {
+              return MATCH; /* "%" at the end of the pattern matches */
+            }
+            /* At this point variable c contains the first character of the
+            ** pattern string past the "*".  Search in the input string for the
+            ** first matching character and recursively continue the match from
+            ** that point.
+            */
+            int match;
+            char stop[4];
+            stop[0] = c;
+            stop[1] = '|';
+            stop[2] = '\n';
+            stop[3] = 0;
+            while (1) {
+              s += strcspn((const char *)s, stop);
+              if (s[0] == '|' || s[0] == '\n' || s[0] == 0)
+                break;
+              s++;
+              match = __pattern_compare(s, pattern);
+              if (match != NOMATCH)
+                return match;
+            }
+            return NOWILDCARDMATCH;
+          }
+          c2 = CharRead(s);
+          if (c == c2)
+            continue;
+          return NOMATCH;
+        }
+        return (s[0] == '|' || s[0] == '\n' || s[0] == 0) ? MATCH : NOMATCH;
+      }
+      bool pattern_compare(char *s, char *pattern) {
+        return __pattern_compare(s, pattern) == MATCH;
       }
       long hash(char *str0, int len)
       {
