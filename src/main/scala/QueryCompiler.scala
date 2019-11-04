@@ -2,6 +2,7 @@ package lb2c
 
 import java.util.Calendar
 
+import scala.collection.mutable.HashMap
 import scala.lms.common._
 
 trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
@@ -565,6 +566,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
   def getSchema(o: Operator): Schema = o match {
     case ScanOp(_, schema, _) => schema
+    case ScanTableOp(name) => tableSchemaMap(name)
     case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
     case CaseWhenOp(child, _, _, _, alias) => getSchema(child) ++ Vector(DoubleAttribute(alias)) // TODO: Use appropriate types; maybe implicit type decision is required based on type of inputs
     case ProjectOp(child, attributes) =>
@@ -860,10 +862,42 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   type ThreadCallback = Rep[Int] => (DataLoop => Unit)
   type ParallelSection = ThreadCallback => Unit
 
+  lazy val tableMap = new HashMap[String, SimpleRecordBuffer]
+  lazy val tableSchemaMap = new HashMap[String, Schema]
+
   def getForeachFunction(o: Operator): DataLoop = o match {
+    case PreloadExecOp(tables, child) =>
+      val loadFunctions = tables map { loadTableOp => getForeachFunction(loadTableOp) }
+      val foreachChildRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        loadFunctions foreach { loadFunction =>
+          loadFunction { _ => }
+        }
+        foreachChildRecord { record =>
+          callback(record)
+        }
+      }
+
+    case LoadTableOp(name, scanOp) =>
+      val buffer = new SimpleRecordBuffer(getSchema(scanOp), 1 << 28)
+      tableMap += (name -> buffer)
+      tableSchemaMap += (name -> getSchema(scanOp))
+      val foreachRecord = getForeachFunction(scanOp)
+      (callback: RecordCallback) => {
+        foreachRecord { record => buffer.add(record) }
+      }
+
     case ScanOp(filename, schema, delimiter) =>
       (callback: RecordCallback) => {
         processCSV(filename, schema, delimiter)(callback)
+      }
+
+    case ScanTableOp(table) =>
+      (callback: RecordCallback) => {
+        val recordBuffer = tableMap(table)
+        recordBuffer foreach { record =>
+          callback(record)
+        }
       }
 
     case CalculateOp(child, attributeExpList) =>
@@ -1613,6 +1647,28 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
         f(Record(buffer(index), schema))
       }
     }
+  }
+
+  class SimpleRecordBuffer(schema: Schema, size: Int) {
+    val buffer = new ColumnarRecordBuffer(schema, size)
+    var len = var_new(0)
+
+    def cleanup(): Rep[Unit] = {
+      len = 0
+    }
+
+    def add(record: Record) = {
+      buffer(len) = record.fields
+      len += 1
+    }
+
+    def foreach(f: Record => Rep[Unit]) = {
+      for (i <- 0 until len) {
+        f(Record(buffer(i), schema))
+      }
+    }
+
+    def apply(index: Rep[Int]) = buffer(index)
   }
 
   class SimpleSIMDBuffer(schema: Schema, size: Int) {

@@ -8,7 +8,10 @@ trait OpParser {
 
   abstract class Operator
   case class PrintOp(childOp: Operator) extends Operator
+  case class PreloadExecOp(tables: Seq[LoadTableOp], childOp: Operator) extends Operator
+  case class LoadTableOp(name: String, scanOp: Operator) extends Operator
   case class ScanOp(tableName: String, schema: Schema, delimiter: Char) extends Operator
+  case class ScanTableOp(tableName: String) extends Operator
   case class ProjectOp(childOp: Operator, attributes: Seq[String]) extends Operator
   case class FilterOp(childOp: Operator, predicate: Seq[Predicate]) extends Operator
   case class NestedLoopJoinOp(leftChild: Operator, rightChild: Operator, leftAttr: String, rightAttr: String) extends Operator
@@ -67,8 +70,16 @@ trait OpParser {
   import scala.util.parsing.combinator._
   object Grammar extends JavaTokenParsers { // JavaTokenParsers must be capsuled, or get some overriding error
 
-    def query: Parser[Operator] = printOperator | relationalOperator ^^ {
+    def query: Parser[Operator] = operator | preloadExecOperator ^^ {
       case op => op
+    }
+
+    def operator: Parser[Operator] = printOperator | relationalOperator ^^ {
+      case op => op
+    }
+
+    def preloadExecOperator: Parser[Operator] = "PreloadExec" ~> "(" ~> tables ~ "," ~ operator <~ ")" ^^ {
+      case tables ~ "," ~ op => PreloadExecOp(tables, op)
     }
 
     def relationalOperator: Parser[Operator] = operatorExceptForProject | projectOperator ^^ {
@@ -96,8 +107,14 @@ trait OpParser {
       case relation ~ "," ~ predicates ~ "then" ~ a ~ "else" ~ b ~ "as" ~ alias => CaseWhenOp(relation, predicates, a, b, alias)
     }
 
-    def scanOperator: Parser[Operator] = "Scan" ~> "(" ~> tableIdentifier ~ "," ~ attributeWithTypeList <~ ")" ^^ {
+    def scanOperator: Parser[Operator] = scanCsvOperator | scanTableOperator
+
+    def scanCsvOperator: Parser[Operator] = "Scan" ~> "(" ~> tableIdentifier ~ "," ~ attributeWithTypeList <~ ")" ^^ {
       case table ~ _ ~ attrList => ScanOp(table, attrList.toVector, '|')
+    }
+
+    def scanTableOperator: Parser[Operator] = "ScanTable" ~> "(" ~> ident <~ ")" ^^ {
+      case name => ScanTableOp(name)
     }
 
     def filterOperator: Parser[Operator] = filterScalarOperator | filterVectorOperator
@@ -141,6 +158,12 @@ trait OpParser {
         "min" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Min(attribute) } |
         "sum" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Sum(attribute) } |
         "avg" ~> "(" ~> attributeIdentifier <~ ")" ^^ { attribute => Average(attribute) }
+
+    def tables: Parser[Seq[LoadTableOp]] = repsep(table, ",")
+
+    def table: Parser[LoadTableOp] = scanOperator ~ "as" ~ ident ^^ {
+      case scanOperator ~ _ ~ alias => LoadTableOp(alias, scanOperator)
+    }
 
     def predicates: Parser[Seq[Predicate]] = repsep(predicate, "and")
 
