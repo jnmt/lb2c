@@ -1095,9 +1095,52 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   def execParOp(o: Operator): ParallelSection = o match {
+    case PreloadExecOp(tables, child) =>
+      val loadFunctions = tables map { loadTableOp => getForeachFunction(loadTableOp) }
+      val parallelSection = execParOp(child)
+      (threadCallback: ThreadCallback) => {
+        loadFunctions foreach { loadFunction =>
+          loadFunction { _ => }
+        }
+        parallelSection { threadId: Rep[Int] =>
+          foreachRecord: DataLoop =>
+            foreachRecord { record =>
+              threadCallback(threadId)((callback: RecordCallback) => callback(record))
+            }
+        }
+      }
+
+    case LoadTableOp(name, scanOp) =>
+      val buffer = new SimpleRecordBuffer(getSchema(scanOp), 1 << 28)
+      tableMap += (name -> buffer)
+      tableSchemaMap += (name -> getSchema(scanOp))
+      val function = execParOp(scanOp)
+      (_: ThreadCallback) => {
+        function { _: Rep[Int] =>
+          foreachRecord: DataLoop =>
+            foreachRecord { record =>
+              buffer.add(record)
+            }
+        }
+      }
+
     case ScanOp(filename, schema, delimiter) =>
       (threadCallback: ThreadCallback) => {
         parProcessCSV(filename, schema, delimiter)(threadCallback)
+      }
+
+    case ScanTableOp(table) =>
+      (threadCallback: ThreadCallback) => {
+        val recordBuffer = tableMap(table)
+        parallel_for {
+          for (i <- 0 until numberOfThreads) {
+            threadCallback(i)((callback: RecordCallback) => {
+              recordBuffer.foreachInPartition(i, numberOfThreads) {
+                callback(_)
+              }
+            })
+          }
+        }
       }
 
     case CalculateOp(child, _) => getParallelFunction(o, child)
@@ -1664,6 +1707,17 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     def foreach(f: Record => Rep[Unit]) = {
       for (i <- 0 until len) {
+        f(Record(buffer(i), schema))
+      }
+    }
+
+    def foreachInPartition(partitionNumber: Rep[Int], numberOfPartitions: Rep[Int])(f: Record => Rep[Unit]) = {
+      val assignment = len / numberOfPartitions + 1
+      val start = partitionNumber * assignment
+      var end = (partitionNumber + 1) * assignment
+      if (end > len)
+        end = len
+      for (i <- start until end) {
         f(Record(buffer(i), schema))
       }
     }
