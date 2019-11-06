@@ -22,6 +22,7 @@ trait OpParser {
   case class CaseWhenOp(childOp: Operator, predicates: Seq[Predicate], a: Term, b: Term, alias: String) extends Operator
   // SIMD
   case class FilterVOp(childOp: Operator, predicate: Seq[Predicate]) extends Operator
+  case class CalculateVOp(childOp: Operator, expressions: Seq[RootArithmeticOp]) extends Operator
 
   abstract class ArithmeticOperator
   case class RootArithmeticOp(child: ArithmeticOperator, alias: String) extends ArithmeticOperator
@@ -99,8 +100,14 @@ trait OpParser {
       case relation ~ "," ~ attrList => ProjectOp(relation, attrList.toVector)
     }
 
-    def calculateOperator: Parser[Operator] = "Calculate" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeExpList <~ ")" ^^ {
+    def calculateOperator: Parser[Operator] = calculateScalarOperator | calculateVectorOperator
+
+    def calculateScalarOperator: Parser[Operator] = "Calculate" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeExpList <~ ")" ^^ {
       case relation ~ "," ~ attrExpList => CalculateOp(relation, attrExpList.toVector)
+    }
+
+    def calculateVectorOperator: Parser[Operator] = "CalculateV" ~> "(" ~> operatorExceptForProject ~ "," ~ attributeExpList <~ ")" ^^ {
+      case relation ~ "," ~ attrExpList => CalculateVOp(relation, attrExpList.toVector)
     }
 
     def caseWhenOperator: Parser[Operator] = "CaseWhen" ~> "(" ~> operatorExceptForProject ~ "," ~ predicates ~ "then" ~ attributeOrValue ~ "else" ~ attributeOrValue ~ "as" ~ ident <~ ")" ^^ {

@@ -462,7 +462,7 @@ abstract class DslDriverC[A:Manifest,B:Manifest] extends DslSnippet[A,B] with Ds
     //TODO: use precompile
     (new java.io.File("/tmp/snippet")).delete
     import scala.sys.process._
-    (s"cc -std=c99 -O3 -Xpreprocessor -fopenmp -lomp -mavx512f /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
+    (s"cc -std=c99 -O3 -Xpreprocessor -fopenmp -lomp -mavx512f -mavx512dq /tmp/snippet.c -o /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _)
     (s"sde -skx -- /tmp/snippet":ProcessBuilder).lines.foreach(Console.println _) // Run snippet using emulator
   }
   /*

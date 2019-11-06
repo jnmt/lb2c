@@ -4,15 +4,18 @@ import scala.lms.common._
 import scala.reflect.SourceContext
 
 trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
+  class __m256i
   class __m512i
   class __m512d
   class __mmask8
   class __mmask16
 
+  implicit def __m256iTyp: Typ[__m256i]
   implicit def __m512iTyp: Typ[__m512i]
   implicit def __m512dTyp: Typ[__m512d]
   implicit def __mmask8Typ: Typ[__mmask8]
   implicit def __mmask16Typ: Typ[__mmask16]
+  implicit def toRep256i(x: __m256i) = unit(x)
   implicit def toRep512i(x: __m512i) = unit(x)
   implicit def toRep512d(x: __m512d) = unit(x)
   implicit def toRepMask8(x: __mmask8) = unit(x)
@@ -32,6 +35,7 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
 
   def _mm512_mask_storeu_epi32(array: Rep[Array[Int]], bitmask: Rep[__mmask16], v: Rep[__m512i]): Rep[Unit]
   def _mm512_mask_storeu_pd(array: Rep[Array[Double]], bitmask: Rep[__mmask8], v: Rep[__m512d]): Rep[Unit]
+  def _mm512_mask_storeu_pd(array: Rep[Array[Double]], offset: Int, bitmask: Rep[__mmask8], v: Rep[__m512d]): Rep[Unit]
 
   def _mm512_mask_compressstoreu_epi32(array: Rep[Array[Int]], bitmask: Rep[__mmask16], v: Rep[__m512i]): Rep[Unit]
   def _mm512_mask_compressstoreu_pd(array: Rep[Array[Double]], bitmask: Rep[__mmask8], v: Rep[__m512d]): Rep[Unit]
@@ -45,10 +49,12 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
   def _mm512_add_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i]
   def _mm512_sub_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i]
   def _mm512_mullo_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i]
+  def _mm512_div_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i]
 
   def _mm512_add_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d]
   def _mm512_sub_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d]
   def _mm512_mul_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d]
+  def _mm512_div_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d]
 
   def _mm512_cmpeq_epi32_mask(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__mmask16]
   def _mm512_cmpge_epi32_mask(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__mmask16]
@@ -62,16 +68,26 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
   def _mm512_cmple_pd_mask(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__mmask8]
   def _mm512_cmplt_pd_mask(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__mmask8]
 
+  def _mm512_extracti32x8_epi32(x: Rep[__m512i], i: Rep[Int]): Rep[__m256i]
+
+  def _mm512_cvtepi32_pd(x: Rep[__m256i]): Rep[__m512d]
+
   def _mm512_kand8(x: Rep[__mmask8], y: Rep[__mmask8]): Rep[__mmask8]
   def _mm512_kor8(x: Rep[__mmask8], y: Rep[__mmask8]): Rep[__mmask8]
 
   def _mm512_kand16(x: Rep[__mmask16], y: Rep[__mmask16]): Rep[__mmask16]
   def _mm512_kor16(x: Rep[__mmask16], y: Rep[__mmask16]): Rep[__mmask16]
 
-  case class Vec16i(reg: Rep[__m512i]) {
+  abstract class Vec
+  case class Vec16i(reg: Rep[__m512i]) extends Vec {
     def add(x: Vec16i): Vec16i = Vec16i(_mm512_add_epi32(reg, x.reg))
+    def add(x: Vec16d): Vec16d = this.toVec16d add x
     def sub(x: Vec16i): Vec16i = Vec16i(_mm512_sub_epi32(reg, x.reg))
+    def sub(x: Vec16d): Vec16d = this.toVec16d sub x
     def mullo(x: Vec16i): Vec16i = Vec16i(_mm512_mullo_epi32(reg, x.reg))
+    def mul(x: Vec16d): Vec16d = this.toVec16d mul x
+    def div(x: Vec16i): Vec16i = Vec16i(_mm512_div_epi32(reg, x.reg))
+    def div(x: Vec16d): Vec16d = this.toVec16d div x
     def isEq(x: Vec16i): Mask16 = Mask16(_mm512_cmpeq_epi32_mask(reg, x.reg))
     def isGe(x: Vec16i): Mask16 = Mask16(_mm512_cmpge_epi32_mask(reg, x.reg))
     def isGt(x: Vec16i): Mask16 = Mask16(_mm512_cmpgt_epi32_mask(reg, x.reg))
@@ -79,6 +95,7 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
     def isLt(x: Vec16i): Mask16 = Mask16(_mm512_cmplt_epi32_mask(reg, x.reg))
     def toBuffer(buffer: Rep[Array[Int]], mask: Mask16) = _mm512_mask_storeu_epi32(buffer, mask.reg, reg)
     def toBufferPacked(buffer: Rep[Array[Int]], mask: Mask16) = _mm512_mask_compressstoreu_epi32(buffer, mask.reg, reg)
+    def toVec16d: Vec16d = Vec16d(_mm512_cvtepi32_pd(_mm512_extracti32x8_epi32(reg, 0)), _mm512_cvtepi32_pd(_mm512_extracti32x8_epi32(reg, 1)))
   }
   def Vec16i(x: Rep[Int]): Vec16i = Vec16i(_mm512_set1_epi32(x))
   def Vec16i(e15: Rep[Int], e14: Rep[Int], e13: Rep[Int], e12: Rep[Int],
@@ -88,7 +105,24 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
     Vec16i(_mm512_set_epi32(e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1, e0))
   def Vec16iFromArray(array: Rep[Array[Int]]): Vec16i = Vec16i(_mm512_loadu_si512(array))
 
-  case class Vec8d(reg: Rep[__m512d]) {
+  case class Vec16d(low: Rep[__m512d], high: Rep[__m512d]) extends Vec {
+    def add(x: Vec16d): Vec16d = Vec16d(_mm512_add_pd(low, x.low), _mm512_add_pd(high, x.high))
+    def add(x: Vec16i): Vec16d = this add x.toVec16d
+    def sub(x: Vec16d): Vec16d = Vec16d(_mm512_sub_pd(low, x.low), _mm512_sub_pd(high, x.high))
+    def sub(x: Vec16i): Vec16d = this sub x.toVec16d
+    def mul(x: Vec16d): Vec16d = Vec16d(_mm512_mul_pd(low, x.low), _mm512_mul_pd(high, x.high))
+    def mul(x: Vec16i): Vec16d = this mul x.toVec16d
+    def div(x: Vec16d): Vec16d = Vec16d(_mm512_div_pd(low, x.low), _mm512_div_pd(high, x.high))
+    def div(x: Vec16i): Vec16d = this div x.toVec16d
+    def toBuffer(buffer: Rep[Array[Double]], mask: Mask16) = {
+      _mm512_mask_storeu_pd(buffer, _mm512_extract_mask8(mask.reg, false), low)
+      _mm512_mask_storeu_pd(buffer, 8, _mm512_extract_mask8(mask.reg, true), high)
+    }
+  }
+  def Vec16d(low: Vec8d, high: Vec8d): Vec16d = Vec16d(low.reg, high.reg)
+  def Vec16dFromArray(array: Rep[Array[Double]]): Vec16d = Vec16d(_mm512_loadu_pd(array), _mm512_loadu_pd(array, 8))
+
+  case class Vec8d(reg: Rep[__m512d]) extends Vec {
     def add(x: Vec8d): Vec8d = Vec8d(_mm512_add_pd(reg, x.reg))
     def sub(x: Vec8d): Vec8d = Vec8d(_mm512_sub_pd(reg, x.reg))
     def mul(x: Vec8d): Vec8d = Vec8d(_mm512_mul_pd(reg, x.reg))
@@ -111,7 +145,6 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
     def or(x: Mask8): Mask8 = Mask8(_mm512_kor8(reg, x.reg))
     def popcount: Rep[Int] = _mm_popcnt8(reg)
   }
-
   case class Mask16(reg: Rep[__mmask16]) {
     def and(x: Mask16): Mask16 = Mask16(_mm512_kand16(reg, x.reg))
     def or(x: Mask16): Mask16 = Mask16(_mm512_kor16(reg, x.reg))
@@ -120,10 +153,12 @@ trait SIMDVectorOps extends Base with UncheckedOps { this: Dsl =>
   def Mask16(low: Mask8, high: Mask8): Mask16 = Mask16(_mm512_concat_mask8(low.reg, high.reg))
   def Mask16FromInt(x: Rep[Int]): Mask16 = Mask16(_mm512_set_mask16(x))
   def _mm512_concat_mask8(low: Rep[__mmask8], high: Rep[__mmask8]): Rep[__mmask16]
+  def _mm512_extract_mask8(x: Rep[__mmask16], high: Boolean): Rep[__mmask8]
   def _mm512_set_mask16(x: Rep[Int]): Rep[__mmask16]
 }
 
 trait SIMDVectorExp extends SIMDVectorOps with UncheckedOpsExp { this: DslExp =>
+  implicit def __m256iTyp: Typ[__m256i] = manifestTyp
   implicit def __m512iTyp: Typ[__m512i] = manifestTyp
   implicit def __m512dTyp: Typ[__m512d] = manifestTyp
   implicit def __mmask8Typ: Typ[__mmask8] = manifestTyp
@@ -151,6 +186,9 @@ trait SIMDVectorExp extends SIMDVectorOps with UncheckedOpsExp { this: DslExp =>
   def _mm512_mask_storeu_pd(array: Rep[Array[Double]], bitmask: Rep[__mmask8], v: Rep[__m512d]): Rep[Unit] = {
     uncheckedPure[Unit]("_mm512_mask_storeu_pd(", array, ",", bitmask, ",", v, ")")
   }
+  def _mm512_mask_storeu_pd(array: Rep[Array[Double]], offset: Int, bitmask: Rep[__mmask8], v: Rep[__m512d]): Rep[Unit] = {
+    uncheckedPure[Unit]("_mm512_mask_storeu_pd(", array, "+", offset, ",", bitmask, ",", v, ")")
+  }
 
   def _mm512_mask_compressstoreu_epi32(array: Rep[Array[Int]], bitmask: Rep[__mmask16], v: Rep[__m512i]): Rep[Unit] = {
     uncheckedPure[Unit]("_mm512_mask_compressstoreu_epi32(", array, ",", bitmask, ",", v, ")")
@@ -168,10 +206,12 @@ trait SIMDVectorExp extends SIMDVectorOps with UncheckedOpsExp { this: DslExp =>
   def _mm512_add_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i] = uncheckedPure[__m512i]("_mm512_add_epi32(", vx, ",", vy, ")")
   def _mm512_sub_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i] = uncheckedPure[__m512i]("_mm512_sub_epi32(", vx, ",", vy, ")")
   def _mm512_mullo_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i] = uncheckedPure[__m512i]("_mm512_mullo_epi32(", vx, ",", vy, ")")
+  def _mm512_div_epi32(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__m512i] = uncheckedPure[__m512i]("_mm512_div_epi32(", vx, ",", vy, ")")
 
   def _mm512_add_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d] = uncheckedPure[__m512d]("_mm512_add_pd(", vx, ",", vy, ")")
   def _mm512_sub_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d] = uncheckedPure[__m512d]("_mm512_sub_pd(", vx, ",", vy, ")")
   def _mm512_mul_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d] = uncheckedPure[__m512d]("_mm512_mul_pd(", vx, ",", vy, ")")
+  def _mm512_div_pd(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__m512d] = uncheckedPure[__m512d]("_mm512_div_pd(", vx, ",", vy, ")")
 
   def _mm512_cmpeq_epi32_mask(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__mmask16] = uncheckedPure[__mmask16]("_mm512_cmpeq_epi32_mask(", vx, ",", vy, ")")
   def _mm512_cmpge_epi32_mask(vx: Rep[__m512i], vy: Rep[__m512i]): Rep[__mmask16] = uncheckedPure[__mmask16]("_mm512_cmpge_epi32_mask(", vx, ",", vy, ")")
@@ -185,6 +225,10 @@ trait SIMDVectorExp extends SIMDVectorOps with UncheckedOpsExp { this: DslExp =>
   def _mm512_cmple_pd_mask(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__mmask8] = uncheckedPure[__mmask8]("_mm512_cmp_pd_mask(", vx, ",", vy, ",_MM_CMPINT_LE)")
   def _mm512_cmplt_pd_mask(vx: Rep[__m512d], vy: Rep[__m512d]): Rep[__mmask8] = uncheckedPure[__mmask8]("_mm512_cmp_pd_mask(", vx, ",", vy, ",_MM_CMPINT_LT)")
 
+  def _mm512_extracti32x8_epi32(x: Rep[__m512i], i: Rep[Int]): Rep[__m256i] = uncheckedPure[__m256i]("_mm512_extracti32x8_epi32(", x, ",", i, ")")
+
+  def _mm512_cvtepi32_pd(x: Rep[__m256i]): Rep[__m512d] = uncheckedPure[__m512d]("_mm512_cvtepi32_pd(", x, ")")
+
   def _mm512_kand8(x: Rep[__mmask8], y: Rep[__mmask8]): Rep[__mmask8] = uncheckedPure[__mmask8]("_mm512_kand(", x, ",", y, ")")
   def _mm512_kor8(x: Rep[__mmask8], y: Rep[__mmask8]): Rep[__mmask8] = uncheckedPure[__mmask8]("_mm512_kor(", x, ",", y, ")")
 
@@ -193,6 +237,13 @@ trait SIMDVectorExp extends SIMDVectorOps with UncheckedOpsExp { this: DslExp =>
 
   def _mm512_set_mask16(x: Rep[Int]): Rep[__mmask16] = uncheckedPure[__mmask16](x)
   def _mm512_concat_mask8(low: Rep[__mmask8], high: Rep[__mmask8]): Rep[__mmask16] = uncheckedPure[__mmask16]("_mm512_kor(", low, ",", high, "<<8)")
+  def _mm512_extract_mask8(x: Rep[__mmask16], high: Boolean): Rep[__mmask8] = {
+    if (high) {
+      uncheckedPure[__mmask8]("_mm512_kand(", x, ">>8, 0x00ff)")
+    } else {
+      uncheckedPure[__mmask8]("_mm512_kand(", x, ", 0x00ff)")
+    }
+  }
 }
 
 trait CGenSIMDOps extends CGenEffect {
@@ -202,13 +253,15 @@ trait CGenSIMDOps extends CGenEffect {
   override def remap[A](m: Typ[A]): String = {
     // To make this match the type string like: lb2c.Run$$anon$1@26eea7e.type#lb2c.SIMDVectorOps$_m512i
     // TODO: Should not use _m512i as anonymous?
+    val is256i = ".*__m256i$".r
     val is512i = ".*__m512i$".r
     val is512d = ".*__m512d$".r
     val isMask8 = ".*__mmask8$".r
     val isMask16 = ".*__mmask16$".r
     m.toString match {
+      case is256i() => "__m256i"
       case is512i() => "__m512i"
-      case is512d() => "__m512i"
+      case is512d() => "__m512d"
       case isMask8() => "__mmask8"
       case isMask16() => "__mmask16"
       case _ => super.remap(m)
@@ -219,11 +272,13 @@ trait CGenSIMDOps extends CGenEffect {
     // Use __m512 as primitive type not as object (pointer)
     // To make this match the type string like: lb2c.Run$$anon$1@26eea7e.type#lb2c.SIMDVectorOps$_m512i
     // TODO: Should not use _m512i as anonymous?
+    val is256i = ".*__m256i$".r
     val is512i = ".*__m512i$".r
     val is512d = ".*__m512d$".r
     val isMask8 = ".*__mmask8$".r
     val isMask16 = ".*__mmask16$".r
     tpe match {
+      case is256i() => true
       case is512i() => true
       case is512d() => true
       case isMask8() => true

@@ -568,6 +568,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     case ScanOp(_, schema, _) => schema
     case ScanTableOp(name) => tableSchemaMap(name)
     case CalculateOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
+    case CalculateVOp(child, attributeExpList) => getSchema(child) ++ getArithmeticOperatorSchema(attributeExpList)
     case CaseWhenOp(child, _, _, _, alias) => getSchema(child) ++ Vector(DoubleAttribute(alias)) // TODO: Use appropriate types; maybe implicit type decision is required based on type of inputs
     case ProjectOp(child, attributes) =>
       attributes.foldLeft(Vector.empty[Attribute]) { (result, attr) => result ++ getSchema(child).find(_.name == attr) }
@@ -769,6 +770,57 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       }
   }
 
+  def execArithmeticOpVec(aop: ArithmeticOperator, buffer: SimpleSIMDBuffer): Vec = aop match {
+    case RootArithmeticOp(child, _) => execArithmeticOpVec(child, buffer)
+    case AddOp(leftChild, rightChild) =>
+      val a = execArithmeticOpVec(leftChild, buffer)
+      val b = execArithmeticOpVec(rightChild, buffer)
+      (a, b) match {
+        case (a: Vec16i, b: Vec16i) => a add b
+        case (a: Vec16i, b: Vec16d) => a add b
+        case (a: Vec16d, b: Vec16i) => a add b
+        case (a: Vec16d, b: Vec16d) => a add b
+      }
+    case SubOp(leftChild, rightChild) =>
+      val a = execArithmeticOpVec(leftChild, buffer)
+      val b = execArithmeticOpVec(rightChild, buffer)
+      (a, b) match {
+        case (a: Vec16i, b: Vec16i) => a sub b
+        case (a: Vec16i, b: Vec16d) => a sub b
+        case (a: Vec16d, b: Vec16i) => a sub b
+        case (a: Vec16d, b: Vec16d) => a sub b
+      }
+    case MultiplyOp(leftChild, rightChild) =>
+      val a = execArithmeticOpVec(leftChild, buffer)
+      val b = execArithmeticOpVec(rightChild, buffer)
+      (a, b) match {
+        case (a: Vec16i, b: Vec16i) => a mullo b
+        case (a: Vec16i, b: Vec16d) => a mul b
+        case (a: Vec16d, b: Vec16i) => a mul b
+        case (a: Vec16d, b: Vec16d) => a mul b
+      }
+    case DivideOp(leftChild, rightChild) =>
+      val a = execArithmeticOpVec(leftChild, buffer)
+      val b = execArithmeticOpVec(rightChild, buffer)
+      (a, b) match {
+        case (a: Vec16i, b: Vec16i) => a div b
+        case (a: Vec16i, b: Vec16d) => a div b
+        case (a: Vec16d, b: Vec16i) => a div b
+        case (a: Vec16d, b: Vec16d) => a div b
+      }
+    case ParenthesizedOp(child) => execArithmeticOpVec(child, buffer)
+    case AttributeOp(name) =>
+      buffer(name) match {
+        case IntSIMDBuffer(array) => Vec16iFromArray(array)
+        case DoubleSIMDBuffer(array) => Vec16dFromArray(array)
+      }
+    case ValueOp(value) =>
+      value match {
+        case Value(x: Int) => Vec16i(x)
+        case Value(x: Double) => Vec16d(Vec8d(x), Vec8d(x))
+      }
+  }
+
   def execOp(o: Operator)(callback: RecordCallback): Rep[Unit] = o match {
     case ScanOp(filename, schema, delimiter) =>
       processCSV(filename, schema, delimiter)(callback)
@@ -904,6 +956,38 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val foreachRecord = getForeachFunction(child)
       (callback: RecordCallback) => {
         foreachRecord { record => execCalculateInternal(record, attributeExpList, callback) }
+      }
+
+    case CalculateVOp(child, attributeExpList) =>
+      val schema = getSchema(child)
+      val arithmeticSchema = getArithmeticOperatorSchema(attributeExpList)
+      val buffer = new SimpleSIMDBuffer(schema, 16)
+      val result = new SimpleSIMDBuffer(arithmeticSchema, 16)
+      val foreachRecord = getForeachFunction(child)
+      (callback: RecordCallback) => {
+        foreachRecord { record =>
+          buffer.add(record)
+          if (buffer.len == 16) {
+            // SIMD operation
+            attributeExpList.foreach { o =>
+              val vec = execArithmeticOpVec(o, buffer)
+              val res = result(o.alias)
+              (vec, res) match {
+                case (v: Vec16i, IntSIMDBuffer(array)) => v.toBuffer(array, Mask16FromInt(0xffff))
+                case (v: Vec16d, DoubleSIMDBuffer(array)) => v.toBuffer(array, Mask16FromInt(0xffff))
+              }
+            }
+            // Call parent operators for each result tuple
+            for (i <- 0 until 16) {
+              callback(Record(buffer(i) ++ result(i), schema ++ arithmeticSchema))
+            }
+            buffer.cleanup()
+          }
+        }
+        // Scalar operation for rest of records
+        buffer foreach { record =>
+          execCalculateInternal(record, attributeExpList, callback)
+        }
       }
 
     case CaseWhenOp(child, predicates, a, b, alias) =>
@@ -1746,6 +1830,7 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
 
     def apply(index: Rep[Int]) = buffer(index)
     def apply(attr: Attribute) = buffer(attr)
+    def apply(attr: String) = buffer(attr)
   }
 
   abstract class ColumnarBuffer
@@ -1933,5 +2018,6 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
     }
 
     def apply(attr: Attribute) = columns(schema.indexWhere(_.name == attr.name))
+    def apply(attr: String) = columns(schema.indexWhere(_.name == attr))
   }
 }
