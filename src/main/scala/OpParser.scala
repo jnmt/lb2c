@@ -7,6 +7,7 @@ trait OpParser {
   type Schema = Vector[Attribute]
 
   abstract class Operator
+  case class TimeOp(childOp: Operator) extends Operator
   case class PrintOp(childOp: Operator) extends Operator
   case class PreloadExecOp(tables: Seq[LoadTableOp], childOp: Operator) extends Operator
   case class LoadTableOp(name: String, scanOp: Operator) extends Operator
@@ -75,7 +76,7 @@ trait OpParser {
       case op => op
     }
 
-    def operator: Parser[Operator] = printOperator | relationalOperator ^^ {
+    def operator: Parser[Operator] = timeOperator | printOperator | relationalOperator ^^ {
       case op => op
     }
 
@@ -91,6 +92,10 @@ trait OpParser {
       scanOperator | filterOperator | joinOperator | aggregateOperator | sortOperator | calculateOperator | caseWhenOperator ^^ {
         case op => op
       }
+
+    def timeOperator: Parser[Operator] = "Time" ~> "(" ~> operator <~ ")" ^^ {
+      case op => TimeOp(op)
+    }
 
     def printOperator: Parser[Operator] = "Print" ~> "(" ~> relationalOperator <~ ")" ^^ {
       case op => PrintOp(op)

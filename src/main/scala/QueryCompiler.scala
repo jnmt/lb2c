@@ -886,6 +886,11 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       printSchema(schema)
       execOp(child) { rec => printFields(rec.fields) }
 
+    case TimeOp(child) =>
+      time {
+        execOp(child) { _ => }
+      }
+
     case CallbackOp(parent, foreachRecord) =>
       foreachRecord { record =>
         parent match {
@@ -1105,6 +1110,14 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
       val foreachRecord = getForeachFunction(child)
       (_: RecordCallback) => {
         foreachRecord { rec => printFields(rec.fields) }
+      }
+
+    case TimeOp(child) =>
+      val foreachRecord = getForeachFunction(child)
+      (_: RecordCallback) => {
+        time {
+          foreachRecord { _ =>  }
+        }
       }
   }
 
@@ -1331,6 +1344,16 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
                 printFields(record.fields)
               }
             }
+        }
+
+    case TimeOp(child) =>
+      val parallelSection = execParOp(child)
+      (_: ThreadCallback) =>
+        time {
+          parallelSection { _ =>
+            foreachRecord =>
+              foreachRecord { _ =>  }
+          }
         }
   }
 

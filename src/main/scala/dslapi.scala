@@ -56,6 +56,7 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps
   def task_wait(b: => Rep[Unit]): Rep[Unit]
   def critical(b: => Rep[Unit]): Rep[Unit]
   def barrier(b: => Rep[Unit]): Rep[Unit]
+  def time(b: => Rep[Unit]): Rep[Unit]
 }
 
 trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp
@@ -130,6 +131,13 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     reflectEffect[Unit](Barrier(br), be)
   }
 
+  case class Time(b: Block[Unit]) extends Def[Unit]
+  def time(b: => Rep[Unit]): Rep[Unit] = {
+    val br = reifyEffects(b)
+    val be = summarizeEffects(br)
+    reflectEffect[Unit](Time(br), be)
+  }
+
   override def boundSyms(e: Any): List[Sym[Any]] = e match {
     case Comment(_, _, b) => effectSyms(b)
     case Single(b) => effectSyms(b)
@@ -139,6 +147,7 @@ trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with Bool
     case TaskWait(b) => effectSyms(b)
     case Critical(b) => effectSyms(b)
     case Barrier(b) => effectSyms(b)
+    case Time(b) => effectSyms(b)
     case _ => super.boundSyms(e)
   }
 
@@ -305,6 +314,12 @@ trait DslGenC extends CGenNumericOps
     case Barrier(b) =>
       stream.println("#pragma omp barrier")
       emitBlock(b)
+    case Time(b) =>
+      stream.println("struct timeval begin, end;")
+      stream.println("begin = cur_time();")
+      emitBlock(b)
+      stream.println("end = cur_time();")
+      stream.println("print_performance(begin, end);")
     case _ => super.emitNode(sym,rhs)
   }
   override def emitSource[A:Typ](args: List[Sym[_]], body: Block[A], functionName: String, out: java.io.PrintWriter) = {
@@ -317,6 +332,7 @@ trait DslGenC extends CGenNumericOps
       #include <omp.h>
       #include <sys/mman.h>
       #include <sys/stat.h>
+      #include <sys/time.h>
       #include <stdbool.h>
       #include <stdio.h>
       #include <stdint.h>
@@ -342,6 +358,20 @@ trait DslGenC extends CGenNumericOps
           putchar(*s++);
         }
         return 0;
+      }
+      void print_performance(struct timeval begin, struct timeval end) {
+        long diff = (end.tv_sec - begin.tv_sec) * 1000 * 1000
+                  + (end.tv_usec - begin.tv_usec);
+        if (diff > 1000) {
+          printf("%ld.%ld ms\n", diff/1000, diff%1000);
+        } else {
+          printf("0.%ld ms\n", diff);
+        }
+      }
+      struct timeval cur_time(void) {
+        struct timeval t;
+        gettimeofday(&t, NULL);
+        return t;
       }
       int __pattern_compare(char *s, char *pattern) {
         char c;
