@@ -373,7 +373,7 @@ trait DslGenC extends CGenNumericOps
         gettimeofday(&t, NULL);
         return t;
       }
-      int __pattern_compare(char *s, char *pattern) {
+      int __pattern_compare(const char *s, const char *pattern) {
         char c;
         char c2;
         while ((c = CharRead(pattern)) != 0) {
@@ -413,7 +413,7 @@ trait DslGenC extends CGenNumericOps
         }
         return (s[0] == '|' || s[0] == '\n' || s[0] == 0) ? MATCH : NOMATCH;
       }
-      bool pattern_compare(char *s, char *pattern) {
+      bool pattern_compare(const char *s, const char *pattern) {
         return __pattern_compare(s, pattern) == MATCH;
       }
       long hash(char *str0, int len)
