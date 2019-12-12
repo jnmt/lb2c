@@ -1358,7 +1358,8 @@ trait QueryCompiler extends Dsl with OpParser with CLibraryBase {
   }
 
   def fieldsHash(fields: Fields) = {
-    val hash = (fields.foldLeft(unit(0L)) { (x, y) => x * 41L + y.hash() }).toInt
+    val init: Rep[Long] = 0L
+    val hash = (fields.foldLeft(init) { (x, y) => x * 41L + y.hash() }).toInt
     if (hash >= 0) hash else 0 - hash
   }
 
