@@ -62,6 +62,7 @@ trait Dsl extends PrimitiveOps with NumericOps with BooleanOps
 trait DslExp extends Dsl with PrimitiveOpsExpOpt with NumericOpsExpOpt with BooleanOpsExp
   with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp with MiscOpsExp
   with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp with FunctionsRecursiveExp with WhileExp
+  with StructExp
   with StaticDataExp with VariablesExpOpt with ObjectOpsExpOpt with UtilOpsExp with SIMDVectorExp {
 
   override def boolean_or(lhs: Exp[Boolean], rhs: Exp[Boolean])(implicit pos: SourceContext) : Exp[Boolean] = lhs match {
@@ -207,6 +208,61 @@ trait DslImpl extends DslExp { q =>
   }
 }
 
+trait CGenDataStruct extends CGenEffect {
+  val IR: DslExp
+  import IR._
+
+  override def remap[A](m: Typ[A]) = m match {
+    case ManifestTyp(s) if s <:< manifest[Record] => "struct " + structName(m)
+    case _ => super.remap(m)
+  }
+
+  // TODO: Is this correct way? This is necessary to avoid adding '*' when matching FieldApply
+  override def isPrimitiveType(tpe: String) : Boolean = true
+
+  override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    case Struct(tag, elems) =>
+      val name = structName(sym.tp)
+      registerStruct(name, elems)
+      stream.println("struct " + name + " " + quote(sym)+ ";")
+      elems.foreach( e => stream.println(quote(sym) + "." + e._1 + " = " + quote(e._2) + ";"))
+    case FieldApply(struct, index) =>
+      emitValDef(sym, quote(struct) + "." + index)
+    case FieldUpdate(struct, index, rhs) =>
+      emitValDef(sym, quote(struct) + "." + index + " = " + quote(rhs))
+    case _ => super.emitNode(sym,rhs)
+  }
+
+  def structName[A](t: Typ[A]): String = {
+    t match {
+      // TODO: a little different LMS original
+      case ManifestTyp(m) if (m <:< implicitly[Manifest[AnyRef]]) => "Anon" + math.abs(t.runtimeClass.##)
+      case ManifestTyp(m) if (m <:< implicitly[Manifest[AnyVal]]) => m.toString
+    }
+  }
+
+  override def emitDataStructures(ds: java.io.PrintWriter) {
+    // Forward references to resolve dependencies
+    val hm = new scala.collection.mutable.LinkedHashMap[String, Seq[(String, Typ[_])]]
+    def hit(name: String, elements: Seq[(String, Typ[_])]): Unit = {
+      elements foreach { element =>
+        val elementName = structName(element._2)
+        encounteredStructs.get(elementName).map(e => hit(elementName, e))
+      }
+      hm(name) = elements
+    }
+    encounteredStructs.foreach((hit _).tupled)
+
+    //for ((name, elems) <- encounteredStructs) {
+    for ((name, elems) <- hm) {
+      ds.println("struct " + name + " {")
+      for (e <- elems) ds.println(remap(e._2) + " " + e._1 + ";")
+      ds.println("};")
+    }
+    super.emitDataStructures(ds)
+  }
+}
+
 // TODO: currently part of this is specific to the query tests. generalize? move?
 trait DslGenC extends CGenNumericOps
     with CGenPrimitiveOps with CGenBooleanOps with CGenIfThenElse
@@ -216,6 +272,7 @@ trait DslGenC extends CGenNumericOps
     with CGenStaticData with CGenVariables
     with CGenObjectOps
     with CGenSIMDOps
+    with CGenDataStruct
     with CGenUtilOps {
   val IR: DslExp
   import IR._
@@ -223,12 +280,21 @@ trait DslGenC extends CGenNumericOps
   def getMemoryAllocString(count: String, memType: String): String = {
       "(" + memType + "*)malloc(" + count + " * sizeof(" + memType + "));"
   }
-  override def remap[A](m: Typ[A]): String = m.toString match {
-    case "java.lang.String" => "char*"
-    case "Array[Char]" => "char*"
-    case "Char" => "char"
-    case _ => super.remap(m)
+  override def remap[A](m: Typ[A]): String = {
+    m match {
+      case ArrayTyp(tp) => tp match {
+        case ManifestTyp(s) if s <:< manifest[Char] => "char*"
+        case ManifestTyp(s) if s <:< manifest[Record] => "struct " + structName(tp)
+      }
+      case _ => m.toString match {
+        case "java.lang.String" => "char*"
+        case "Array[Char]" => "char*"
+        case "Char" => "char"
+        case _ => super.remap(m)
+      }
+    }
   }
+
   override def format(s: Exp[Any]): String = {
     remap(s.tp) match {
       case "uint16_t" => "%c"
@@ -338,6 +404,7 @@ trait DslGenC extends CGenNumericOps
       #include <stdint.h>
       #include <string.h>
       #include <unistd.h>
+      #include "snippet.h"
       #ifndef MAP_FILE
       #define MAP_FILE MAP_SHARED
       #endif
@@ -444,6 +511,11 @@ trait DslGenC extends CGenNumericOps
       """)
     }
     super.emitSource[A](args, body, functionName, out)
+    val ds = new java.io.PrintWriter("/tmp/snippet.h")
+    emitDataStructures(ds)
+    ds.flush
+    ds.close
+    Nil
   }
 }
 
