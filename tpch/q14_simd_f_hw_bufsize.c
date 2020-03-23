@@ -22,7 +22,8 @@
 #define HASH_TABLE_SIZE (1 << 22)
 #define BUCKET_SIZE (1 << 8)
 #define NUM_THREADS 4
-#define BUFFER_SIZE 16
+#define VECTOR_SIZE 16
+#define BUFFER_SIZE 256
 int fsize(int fd) {
   struct stat stat;
   fstat(fd, &stat);
@@ -182,56 +183,23 @@ void Snippet(int32_t x1) {
   int32_t *x62 = (int32_t *)malloc(HASH_TABLE_SIZE * sizeof(int32_t));
   int32_t x63 = HASH_TABLE_SIZE * BUCKET_SIZE;
   int32_t *ht_p_partkey = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_name = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_name_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_mfgr = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_mfgr_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_brand = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_brand_len = (int32_t *)malloc(x63 * sizeof(int32_t));
   char **ht_p_type = (char **)malloc(x63 * sizeof(char *));
   int32_t *ht_p_type_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  int32_t *ht_p_size = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_container = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_container_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  double *ht_p_retailprice = (double *)malloc(x63 * sizeof(double));
-  char **ht_p_comment = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_comment_len = (int32_t *)malloc(x63 * sizeof(int32_t));
   int32_t *bucket_status = (int32_t *)malloc(HASH_TABLE_SIZE * sizeof(int32_t));
   for (int x80 = 0; x80 < HASH_TABLE_SIZE; x80++) {
     bucket_status[x80] = 0;
   }
 
   // For LineItem Table Buffer x84-x110
-  int32_t *buf_l_orderkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_partkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_suppkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_linenumber = (int32_t *)malloc(16 * sizeof(int32_t));
-  double *buf_l_quantity = (double *)malloc(16 * sizeof(double));
-  double *buf_l_extendedprice = (double *)malloc(16 * sizeof(double));
-  double *buf_l_discount = (double *)malloc(16 * sizeof(double));
-  double *buf_l_tax = (double *)malloc(16 * sizeof(double));
-  char **buf_l_returnflag = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_returnflag_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_linestatus = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_linestatus_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_shipinstruct = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_shipinstruct_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_shipmode = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_shipmode_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_comment = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_comment_len = (int32_t *)malloc(16 * sizeof(int32_t));
+  int32_t *buf_l_partkey = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
+  double *buf_l_extendedprice = (double *)malloc(BUFFER_SIZE * sizeof(double));
+  double *buf_l_discount = (double *)malloc(BUFFER_SIZE * sizeof(double));
+  int32_t *buf_l_shipdate_y = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
+  int32_t *buf_l_shipdate_m = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
+  int32_t *buf_l_shipdate_d = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
   int32_t index = 0;
 
-  int32_t *indexBuffer = (int32_t *)malloc(16 * sizeof(int32_t));
+  int32_t *indexBuffer = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
   int32_t x118 = 0;
   int32_t x115 = open("/home/jun/tpch-dbgen/sf1/part.tbl", 0);
   int32_t x116 = fsize(x115);
@@ -976,8 +944,14 @@ void Snippet(int32_t x1) {
   __m512i x986 = _mm512_mullo_epi32(x985, x971);
   __m512i x987 = _mm512_add_epi32(x977, x986);
   __m512i x988 = _mm512_add_epi32(x987, x981);
-  __m512i indexVec =
-      _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+  __m512i indexVec[BUFFER_SIZE / VECTOR_SIZE];
+  for (int n = 0; n < BUFFER_SIZE / VECTOR_SIZE; n++) {
+    int offset = VECTOR_SIZE * n;
+    indexVec[n] = _mm512_set_epi32(
+        offset + 15, offset + 14, offset + 13, offset + 12, offset + 11,
+        offset + 10, offset + 9, offset + 8, offset + 7, offset + 6, offset + 5,
+        offset + 4, offset + 3, offset + 2, offset + 1, offset);
+  }
   int32_t x1067 = (int32_t)0L;
   bool x1068 = x1067 >= 0;
   int32_t x1070;
@@ -1039,67 +1013,40 @@ void Snippet(int32_t x1) {
     x62[x869] = p_partkey[i];
     int32_t x884 = x869 * BUCKET_SIZE + x876;
     ht_p_partkey[x884] = p_partkey[i];
-    ht_p_name[x884] = p_name[i];
-    ht_p_name_len[x884] = p_name_len[i];
-    ht_p_mfgr[x884] = p_mfgr[i];
-    ht_p_mfgr_len[x884] = p_mfgr_len[i];
-    ht_p_brand[x884] = p_brand[i];
-    ht_p_brand_len[x884] = p_brand_len[i];
     ht_p_type[x884] = p_type[i];
     ht_p_type_len[x884] = p_type_len[i];
-    ht_p_size[x884] = p_size[i];
-    ht_p_container[x884] = p_container[i];
-    ht_p_container_len[x884] = p_container_len[i];
-    ht_p_retailprice[x884] = p_retailprice[i];
-    ht_p_comment[x884] = p_comment[i];
-    ht_p_comment_len[x884] = p_comment_len[i];
     int32_t x901 = x876 + 1;
     bucket_status[x869] = x901;
   }
   for (int j = 0; j < numLineItemTuples; j++) {
-    buf_l_orderkey[index] = l_orderkey[j];
     buf_l_partkey[index] = l_partkey[j];
-    buf_l_suppkey[index] = l_suppkey[j];
-    buf_l_linenumber[index] = l_linenumber[j];
-    buf_l_quantity[index] = l_quantity[j];
     buf_l_extendedprice[index] = l_extendedprice[j];
     buf_l_discount[index] = l_discount[j];
-    buf_l_tax[index] = l_tax[j];
-    buf_l_returnflag[index] = l_returnflag[j];
-    buf_l_returnflag_len[index] = l_returnflag_len[j];
-    buf_l_linestatus[index] = l_linestatus[j];
-    buf_l_linestatus_len[index] = l_linestatus_len[j];
     buf_l_shipdate_y[index] = l_shipdate_y[j];
     buf_l_shipdate_m[index] = l_shipdate_m[j];
     buf_l_shipdate_d[index] = l_shipdate_d[j];
-    buf_l_commitdate_y[index] = l_commitdate_y[j];
-    buf_l_commitdate_m[index] = l_commitdate_m[j];
-    buf_l_commitdate_d[index] = l_commitdate_d[j];
-    buf_l_receiptdate_y[index] = l_receiptdate_y[j];
-    buf_l_receiptdate_m[index] = l_receiptdate_m[j];
-    buf_l_receiptdate_d[index] = l_receiptdate_d[j];
-    buf_l_shipinstruct[index] = l_shipinstruct[j];
-    buf_l_shipinstruct_len[index] = l_shipinstruct_len[j];
-    buf_l_shipmode[index] = l_shipmode[j];
-    buf_l_shipmode_len[index] = l_shipmode_len[j];
-    buf_l_comment[index] = l_comment[j];
-    buf_l_comment_len[index] = l_comment_len[j];
     index += 1;
     if (index == BUFFER_SIZE) {
-      __m512i x967 = _mm512_loadu_si512(buf_l_shipdate_y);
-      __m512i x969 = _mm512_mullo_epi32(x967, x968);
-      __m512i x970 = _mm512_loadu_si512(buf_l_shipdate_m);
-      __m512i x972 = _mm512_mullo_epi32(x970, x971);
-      __m512i x973 = _mm512_add_epi32(x969, x972);
-      __m512i x974 = _mm512_loadu_si512(buf_l_shipdate_d);
-      __m512i x975 = _mm512_add_epi32(x973, x974);
-      __mmask16 x983 = _mm512_cmpge_epi32_mask(x975, x982);
-      __mmask16 x984 = _mm512_kand(x966, x983);
-      __mmask16 x989 = _mm512_cmplt_epi32_mask(x975, x988);
-      __mmask16 x990 = _mm512_kand(x984, x989);
-      _mm512_mask_compressstoreu_epi32(indexBuffer, x990, indexVec);
-      int32_t x992 = _mm_popcnt_u32(x990);
-      for (int x994 = 0; x994 < x992; x994++) {
+      int result_offset = 0;
+      for (int n = 0; n < BUFFER_SIZE / VECTOR_SIZE; n++) {
+        int offset = VECTOR_SIZE * n;
+        __m512i v_y = _mm512_loadu_si512(buf_l_shipdate_y + offset);
+        __m512i x969 = _mm512_mullo_epi32(v_y, x968);
+        __m512i v_m = _mm512_loadu_si512(buf_l_shipdate_m + offset);
+        __m512i x972 = _mm512_mullo_epi32(v_m, x971);
+        __m512i x973 = _mm512_add_epi32(x969, x972);
+        __m512i v_d = _mm512_loadu_si512(buf_l_shipdate_d + offset);
+        __m512i x975 = _mm512_add_epi32(x973, v_d);
+        __mmask16 x983 = _mm512_cmpge_epi32_mask(x975, x982);
+        __mmask16 x984 = _mm512_kand(x966, x983);
+        __mmask16 x989 = _mm512_cmplt_epi32_mask(x975, x988);
+        __mmask16 x990 = _mm512_kand(x984, x989);
+        _mm512_mask_compressstoreu_epi32(indexBuffer + result_offset, x990,
+                                         indexVec[n]);
+        result_offset += _mm_popcnt_u32(x990);
+      }
+
+      for (int x994 = 0; x994 < result_offset; x994++) {
         int32_t x995 = indexBuffer[x994];
         int32_t x997 = buf_l_partkey[x995];
         double x1001 = buf_l_extendedprice[x995];
