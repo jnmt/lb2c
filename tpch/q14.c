@@ -206,7 +206,7 @@ x79[x80] = 0;
 
 }
 int32_t x87 = 0;
-int32_t x84 = open("/Users/jun/src/tpch-dbgen/part.tbl",0);
+int32_t x84 = open("/home/jun/tpch-dbgen/sf1/part.tbl",0);
 int32_t x85 = fsize(x84);
 int32_t x88 = x85;
 char* x86 = (char*)mmap(0, x85, PROT_READ, MAP_FILE | MAP_SHARED, x84, 0);
@@ -395,7 +395,7 @@ x18 += 1;
 }
 close(x84);
 int32_t x274 = 0;
-int32_t x271 = open("/Users/jun/src/tpch-dbgen/lineitem.tbl",0);
+int32_t x271 = open("/home/jun/tpch-dbgen/sf1/lineitem.tbl",0);
 int32_t x272 = fsize(x271);
 int32_t x275 = x272;
 char* x273 = (char*)mmap(0, x272, PROT_READ, MAP_FILE | MAP_SHARED, x271, 0);

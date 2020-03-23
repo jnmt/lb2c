@@ -236,7 +236,7 @@ int32_t x111 = 0;
 int32_t x112 = 0;
 int32_t* x114 = (int32_t*)malloc(16 * sizeof(int32_t));
 int32_t x118 = 0;
-int32_t x115 = open("/Users/jun/src/tpch-dbgen/part.tbl",0);
+int32_t x115 = open("/home/jun/tpch-dbgen/sf1/part.tbl",0);
 int32_t x116 = fsize(x115);
 int32_t x119 = x116;
 char* x117 = (char*)mmap(0, x116, PROT_READ, MAP_FILE | MAP_SHARED, x115, 0);
@@ -425,7 +425,7 @@ x18 += 1;
 }
 close(x115);
 int32_t x305 = 0;
-int32_t x302 = open("/Users/jun/src/tpch-dbgen/lineitem.tbl",0);
+int32_t x302 = open("/home/jun/tpch-dbgen/sf1/lineitem.tbl",0);
 int32_t x303 = fsize(x302);
 int32_t x306 = x303;
 char* x304 = (char*)mmap(0, x303, PROT_READ, MAP_FILE | MAP_SHARED, x302, 0);

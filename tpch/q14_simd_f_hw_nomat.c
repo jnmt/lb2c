@@ -22,6 +22,7 @@
 #define HASH_TABLE_SIZE (1 << 22)
 #define BUCKET_SIZE (1 << 8)
 #define NUM_THREADS 4
+#define VECTOR_SIZE 16
 #define BUFFER_SIZE 16
 int fsize(int fd) {
   struct stat stat;
@@ -182,56 +183,14 @@ void Snippet(int32_t x1) {
   int32_t *x62 = (int32_t *)malloc(HASH_TABLE_SIZE * sizeof(int32_t));
   int32_t x63 = HASH_TABLE_SIZE * BUCKET_SIZE;
   int32_t *ht_p_partkey = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_name = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_name_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_mfgr = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_mfgr_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_brand = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_brand_len = (int32_t *)malloc(x63 * sizeof(int32_t));
   char **ht_p_type = (char **)malloc(x63 * sizeof(char *));
   int32_t *ht_p_type_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  int32_t *ht_p_size = (int32_t *)malloc(x63 * sizeof(int32_t));
-  char **ht_p_container = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_container_len = (int32_t *)malloc(x63 * sizeof(int32_t));
-  double *ht_p_retailprice = (double *)malloc(x63 * sizeof(double));
-  char **ht_p_comment = (char **)malloc(x63 * sizeof(char *));
-  int32_t *ht_p_comment_len = (int32_t *)malloc(x63 * sizeof(int32_t));
   int32_t *bucket_status = (int32_t *)malloc(HASH_TABLE_SIZE * sizeof(int32_t));
   for (int x80 = 0; x80 < HASH_TABLE_SIZE; x80++) {
     bucket_status[x80] = 0;
   }
 
-  // For LineItem Table Buffer x84-x110
-  int32_t *buf_l_orderkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_partkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_suppkey = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_linenumber = (int32_t *)malloc(16 * sizeof(int32_t));
-  double *buf_l_quantity = (double *)malloc(16 * sizeof(double));
-  double *buf_l_extendedprice = (double *)malloc(16 * sizeof(double));
-  double *buf_l_discount = (double *)malloc(16 * sizeof(double));
-  double *buf_l_tax = (double *)malloc(16 * sizeof(double));
-  char **buf_l_returnflag = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_returnflag_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_linestatus = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_linestatus_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_shipdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_commitdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_y = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_m = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t *buf_l_receiptdate_d = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_shipinstruct = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_shipinstruct_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_shipmode = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_shipmode_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  char **buf_l_comment = (char **)malloc(16 * sizeof(char *));
-  int32_t *buf_l_comment_len = (int32_t *)malloc(16 * sizeof(int32_t));
-  int32_t index = 0;
-
-  int32_t *indexBuffer = (int32_t *)malloc(16 * sizeof(int32_t));
+  int32_t *indexBuffer = (int32_t *)malloc(BUFFER_SIZE * sizeof(int32_t));
   int32_t x118 = 0;
   int32_t x115 = open("/home/jun/tpch-dbgen/sf1/part.tbl", 0);
   int32_t x116 = fsize(x115);
@@ -1039,199 +998,157 @@ void Snippet(int32_t x1) {
     x62[x869] = p_partkey[i];
     int32_t x884 = x869 * BUCKET_SIZE + x876;
     ht_p_partkey[x884] = p_partkey[i];
-    ht_p_name[x884] = p_name[i];
-    ht_p_name_len[x884] = p_name_len[i];
-    ht_p_mfgr[x884] = p_mfgr[i];
-    ht_p_mfgr_len[x884] = p_mfgr_len[i];
-    ht_p_brand[x884] = p_brand[i];
-    ht_p_brand_len[x884] = p_brand_len[i];
     ht_p_type[x884] = p_type[i];
     ht_p_type_len[x884] = p_type_len[i];
-    ht_p_size[x884] = p_size[i];
-    ht_p_container[x884] = p_container[i];
-    ht_p_container_len[x884] = p_container_len[i];
-    ht_p_retailprice[x884] = p_retailprice[i];
-    ht_p_comment[x884] = p_comment[i];
-    ht_p_comment_len[x884] = p_comment_len[i];
     int32_t x901 = x876 + 1;
     bucket_status[x869] = x901;
   }
-  for (int j = 0; j < numLineItemTuples; j++) {
-    buf_l_orderkey[index] = l_orderkey[j];
-    buf_l_partkey[index] = l_partkey[j];
-    buf_l_suppkey[index] = l_suppkey[j];
-    buf_l_linenumber[index] = l_linenumber[j];
-    buf_l_quantity[index] = l_quantity[j];
-    buf_l_extendedprice[index] = l_extendedprice[j];
-    buf_l_discount[index] = l_discount[j];
-    buf_l_tax[index] = l_tax[j];
-    buf_l_returnflag[index] = l_returnflag[j];
-    buf_l_returnflag_len[index] = l_returnflag_len[j];
-    buf_l_linestatus[index] = l_linestatus[j];
-    buf_l_linestatus_len[index] = l_linestatus_len[j];
-    buf_l_shipdate_y[index] = l_shipdate_y[j];
-    buf_l_shipdate_m[index] = l_shipdate_m[j];
-    buf_l_shipdate_d[index] = l_shipdate_d[j];
-    buf_l_commitdate_y[index] = l_commitdate_y[j];
-    buf_l_commitdate_m[index] = l_commitdate_m[j];
-    buf_l_commitdate_d[index] = l_commitdate_d[j];
-    buf_l_receiptdate_y[index] = l_receiptdate_y[j];
-    buf_l_receiptdate_m[index] = l_receiptdate_m[j];
-    buf_l_receiptdate_d[index] = l_receiptdate_d[j];
-    buf_l_shipinstruct[index] = l_shipinstruct[j];
-    buf_l_shipinstruct_len[index] = l_shipinstruct_len[j];
-    buf_l_shipmode[index] = l_shipmode[j];
-    buf_l_shipmode_len[index] = l_shipmode_len[j];
-    buf_l_comment[index] = l_comment[j];
-    buf_l_comment_len[index] = l_comment_len[j];
-    index += 1;
-    if (index == BUFFER_SIZE) {
-      __m512i x967 = _mm512_loadu_si512(buf_l_shipdate_y);
-      __m512i x969 = _mm512_mullo_epi32(x967, x968);
-      __m512i x970 = _mm512_loadu_si512(buf_l_shipdate_m);
-      __m512i x972 = _mm512_mullo_epi32(x970, x971);
-      __m512i x973 = _mm512_add_epi32(x969, x972);
-      __m512i x974 = _mm512_loadu_si512(buf_l_shipdate_d);
-      __m512i x975 = _mm512_add_epi32(x973, x974);
-      __mmask16 x983 = _mm512_cmpge_epi32_mask(x975, x982);
-      __mmask16 x984 = _mm512_kand(x966, x983);
-      __mmask16 x989 = _mm512_cmplt_epi32_mask(x975, x988);
-      __mmask16 x990 = _mm512_kand(x984, x989);
-      _mm512_mask_compressstoreu_epi32(indexBuffer, x990, indexVec);
-      int32_t x992 = _mm_popcnt_u32(x990);
-      for (int x994 = 0; x994 < x992; x994++) {
-        int32_t x995 = indexBuffer[x994];
-        int32_t x997 = buf_l_partkey[x995];
-        double x1001 = buf_l_extendedprice[x995];
-        double x1002 = buf_l_discount[x995];
-        int32_t x1023 = (int32_t)x997;
-        bool x1024 = x1023 >= 0;
-        int32_t x1026;
-        if (x1024) {
-          x1026 = x1023;
+  for (int j = 0; j < numLineItemTuples / VECTOR_SIZE; j++) {
+    int offset = VECTOR_SIZE * j;
+    __m512i x967 = _mm512_loadu_si512(l_shipdate_y + offset);
+    __m512i x969 = _mm512_mullo_epi32(x967, x968);
+    __m512i x970 = _mm512_loadu_si512(l_shipdate_m + offset);
+    __m512i x972 = _mm512_mullo_epi32(x970, x971);
+    __m512i x973 = _mm512_add_epi32(x969, x972);
+    __m512i x974 = _mm512_loadu_si512(l_shipdate_d + offset);
+    __m512i x975 = _mm512_add_epi32(x973, x974);
+    __mmask16 x983 = _mm512_cmpge_epi32_mask(x975, x982);
+    __mmask16 x984 = _mm512_kand(x966, x983);
+    __mmask16 x989 = _mm512_cmplt_epi32_mask(x975, x988);
+    __mmask16 x990 = _mm512_kand(x984, x989);
+    _mm512_mask_compressstoreu_epi32(indexBuffer, x990, indexVec);
+    int32_t x992 = _mm_popcnt_u32(x990);
+    for (int x994 = 0; x994 < x992; x994++) {
+      int32_t x995 = indexBuffer[x994];
+      int32_t x997 = l_partkey[offset + x995];
+      double x1001 = l_extendedprice[offset + x995];
+      double x1002 = l_discount[offset + x995];
+      int32_t x1023 = (int32_t)x997;
+      bool x1024 = x1023 >= 0;
+      int32_t x1026;
+      if (x1024) {
+        x1026 = x1023;
+      } else {
+        int32_t x1025 = 0 - x1023;
+        x1026 = x1025;
+      }
+      int32_t x1027 = x1026 % HASH_TABLE_SIZE;
+      int32_t x1028 = x1027;
+      for (;;) {
+        int32_t x1029 = x1028;
+        int32_t x1030 = bucket_status[x1029];
+        bool x1031 = x1030 > 0;
+        bool x1036;
+        if (x1031) {
+          int32_t x1032 = x62[x1029];
+          bool x1033 = x1032 == x997;
+          bool x1034 = !x1033;
+          x1036 = x1034;
         } else {
-          int32_t x1025 = 0 - x1023;
-          x1026 = x1025;
+          x1036 = false;
         }
-        int32_t x1027 = x1026 % HASH_TABLE_SIZE;
-        int32_t x1028 = x1027;
-        for (;;) {
-          int32_t x1029 = x1028;
-          int32_t x1030 = bucket_status[x1029];
-          bool x1031 = x1030 > 0;
-          bool x1036;
-          if (x1031) {
-            int32_t x1032 = x62[x1029];
-            bool x1033 = x1032 == x997;
-            bool x1034 = !x1033;
-            x1036 = x1034;
-          } else {
-            x1036 = false;
+        if (!x1036)
+          break;
+        int32_t x1038 = x1028;
+        int32_t x1039 = x1038 + 1;
+        x1028 = x1039;
+      }
+      int32_t x1043 = x1028;
+      int32_t x1044 = bucket_status[x1043];
+      int32_t x1045 = x1043 * BUCKET_SIZE;
+      int32_t x1046 = x1045 + x1044;
+      double x1064 = 1.0 - x1002;
+      double x1065 = x1001 * x1064;
+      for (int x1048 = x1045; x1048 < x1046; x1048++) {
+        bool x1066 = pattern_compare(ht_p_type[x1048], "PROMO%");
+        if (x1066) {
+          int32_t x1072 = x1071;
+          for (;;) {
+            int32_t x1073 = x1072;
+            bool x1074 = agg_ht_entry_used[x1073];
+            bool x1076;
+            if (x1074) {
+              x1076 = x1075;
+            } else {
+              x1076 = false;
+            }
+            if (!x1076)
+              break;
+            x1072 += 1;
           }
-          if (!x1036)
-            break;
-          int32_t x1038 = x1028;
-          int32_t x1039 = x1038 + 1;
-          x1028 = x1039;
-        }
-        int32_t x1043 = x1028;
-        int32_t x1044 = bucket_status[x1043];
-        int32_t x1045 = x1043 * BUCKET_SIZE;
-        int32_t x1046 = x1045 + x1044;
-        double x1064 = 1.0 - x1002;
-        double x1065 = x1001 * x1064;
-        for (int x1048 = x1045; x1048 < x1046; x1048++) {
-          bool x1066 = pattern_compare(ht_p_type[x1048], "PROMO%");
-          if (x1066) {
-            int32_t x1072 = x1071;
-            for (;;) {
-              int32_t x1073 = x1072;
-              bool x1074 = agg_ht_entry_used[x1073];
-              bool x1076;
-              if (x1074) {
-                x1076 = x1075;
-              } else {
-                x1076 = false;
-              }
-              if (!x1076)
-                break;
-              x1072 += 1;
-            }
-            int32_t x1081 = x1072;
-            bool x1082 = x1081 == x870;
-            if (x1082) {
-              printf("%s\n", "LB2HashMap table is full.");
-              exit(1);
-            } else {
-            }
-            bool x1087 = agg_ht_entry_used[x1081];
-            if (x1087) {
-              double x1088 = agg_ht_sum1[x1081];
-              double x1089 = agg_ht_sum2[x1081];
-              double x1090 = x1088 + x1065;
-              agg_ht_sum1[x1081] = x1090;
-              double x1091 = x1089 + x1065;
-              agg_ht_sum2[x1081] = x1091;
-            } else {
-              int32_t x1095 = num_agg_ht_entries;
-              agg_htable[x1095] = x1081;
-              num_agg_ht_entries += 1;
-              agg_ht_sum1[x1081] = x1065;
-              agg_ht_sum2[x1081] = x1065;
-              agg_ht_entry_used[x1081] = true;
-            }
+          int32_t x1081 = x1072;
+          bool x1082 = x1081 == x870;
+          if (x1082) {
+            printf("%s\n", "LB2HashMap table is full.");
+            exit(1);
           } else {
-            int32_t x1104 = x1071;
-            for (;;) {
-              int32_t x1105 = x1104;
-              bool x1106 = agg_ht_entry_used[x1105];
-              bool x1107;
-              if (x1106) {
-                x1107 = x1075;
-              } else {
-                x1107 = false;
-              }
-              if (!x1107)
-                break;
-              x1104 += 1;
-            }
-            int32_t x1112 = x1104;
-            bool x1113 = x1112 == x870;
-            if (x1113) {
-              printf("%s\n", "LB2HashMap table is full.");
-              exit(1);
+          }
+          bool x1087 = agg_ht_entry_used[x1081];
+          if (x1087) {
+            double x1088 = agg_ht_sum1[x1081];
+            double x1089 = agg_ht_sum2[x1081];
+            double x1090 = x1088 + x1065;
+            agg_ht_sum1[x1081] = x1090;
+            double x1091 = x1089 + x1065;
+            agg_ht_sum2[x1081] = x1091;
+          } else {
+            int32_t x1095 = num_agg_ht_entries;
+            agg_htable[x1095] = x1081;
+            num_agg_ht_entries += 1;
+            agg_ht_sum1[x1081] = x1065;
+            agg_ht_sum2[x1081] = x1065;
+            agg_ht_entry_used[x1081] = true;
+          }
+        } else {
+          int32_t x1104 = x1071;
+          for (;;) {
+            int32_t x1105 = x1104;
+            bool x1106 = agg_ht_entry_used[x1105];
+            bool x1107;
+            if (x1106) {
+              x1107 = x1075;
             } else {
+              x1107 = false;
             }
-            bool x1118 = agg_ht_entry_used[x1112];
-            if (x1118) {
-              double x1119 = agg_ht_sum1[x1112];
-              double x1120 = agg_ht_sum2[x1112];
-              agg_ht_sum1[x1112] = x1119;
-              double x1121 = x1120 + x1065;
-              agg_ht_sum2[x1112] = x1121;
-            } else {
-              int32_t x1125 = num_agg_ht_entries;
-              agg_htable[x1125] = x1112;
-              num_agg_ht_entries += 1;
-              agg_ht_sum1[x1112] = 0.0;
-              agg_ht_sum2[x1112] = x1065;
-              agg_ht_entry_used[x1112] = true;
-            }
+            if (!x1107)
+              break;
+            x1104 += 1;
+          }
+          int32_t x1112 = x1104;
+          bool x1113 = x1112 == x870;
+          if (x1113) {
+            printf("%s\n", "LB2HashMap table is full.");
+            exit(1);
+          } else {
+          }
+          bool x1118 = agg_ht_entry_used[x1112];
+          if (x1118) {
+            double x1119 = agg_ht_sum1[x1112];
+            double x1120 = agg_ht_sum2[x1112];
+            agg_ht_sum1[x1112] = x1119;
+            double x1121 = x1120 + x1065;
+            agg_ht_sum2[x1112] = x1121;
+          } else {
+            int32_t x1125 = num_agg_ht_entries;
+            agg_htable[x1125] = x1112;
+            num_agg_ht_entries += 1;
+            agg_ht_sum1[x1112] = 0.0;
+            agg_ht_sum2[x1112] = x1065;
+            agg_ht_entry_used[x1112] = true;
           }
         }
       }
-      index = 0;
-    } else {
     }
   }
-  int32_t x1144 = index;
-  for (int x1146 = 0; x1146 < x1144; x1146++) {
-    int32_t x1148 = buf_l_partkey[x1146];
-    double x1152 = buf_l_extendedprice[x1146];
-    double x1153 = buf_l_discount[x1146];
-    int32_t x1159 = buf_l_shipdate_y[x1146];
-    int32_t x1160 = buf_l_shipdate_m[x1146];
-    int32_t x1161 = buf_l_shipdate_d[x1146];
+  int32_t rest_tuples = numLineItemTuples % VECTOR_SIZE;
+  for (int x1146 = 0; x1146 < rest_tuples; x1146++) {
+    int offset = VECTOR_SIZE * (numLineItemTuples / VECTOR_SIZE);
+    int32_t x1148 = l_partkey[offset + x1146];
+    double x1152 = l_extendedprice[offset + x1146];
+    double x1153 = l_discount[offset + x1146];
+    int32_t x1159 = l_shipdate_y[offset + x1146];
+    int32_t x1160 = l_shipdate_m[offset + x1146];
+    int32_t x1161 = l_shipdate_d[offset + x1146];
     int32_t x1174 = x1159 * 10000;
     int32_t x1175 = x1160 * 100;
     int32_t x1176 = x1174 + x1175;
