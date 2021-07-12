@@ -1,10 +1,10 @@
 # LB2C (LB2 Clone)
 
-LB2の再実装。
+LB2の再実装 + SIMD拡張。
 
 ## セットアップ
 
-Ubuntu/Debianでの例を示す。
+Ubuntu 18.04で動作確認済みの手順を以下に示す。
 
 - Java, SBTのインストール
 
